@@ -347,7 +347,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'links_band',
       description:
-        "Returns this session's gh-linear-parse-mod links band: the GitHub PR and Linear links newest first (the band shows PRs above Linear links) with each PR's title, author, lines added and deleted, state, CI and review status, and each Linear issue's status, as last checked, the links dismissed this session, whether the band is hidden or expanded, and its color. Read-only.",
+        "Returns this session's gh-linear-parse-mod links band: the GitHub PR and Linear links newest first (the band shows PRs above Linear links) with each PR's title, author, lines added and deleted, state, CI and review status, whether it has a merge conflict, and each Linear issue's status, as last checked, the links dismissed this session, whether the band is hidden or expanded, and its color. Read-only.",
       inputSchema: { type: 'object', properties: {} },
       isDeferred: false,
     })
@@ -407,7 +407,7 @@ export const register: Register = (on, options) => {
         if (isIssueKey(i.key) && issue) return { url: i.url, status: issue.name ?? 'unavailable', statusType: issue.type, checkedAt: new Date(issue.checkedAt).toISOString() }
         if (!isPrKey(i.key)) return { url: i.url }
         if (!s || s.state === 'unknown') return { url: i.url, status: s ? 'unavailable' : 'not checked yet' }
-        return { url: i.url, title: s.title, author: s.author, additions: s.additions, deletions: s.deletions, state: s.state, ci: s.ci, review: s.review ?? 'none', checkedAt: new Date(s.checkedAt).toISOString() }
+        return { url: i.url, title: s.title, author: s.author, additions: s.additions, deletions: s.deletions, state: s.state, ci: s.ci, hasConflict: s.hasConflict ?? false, review: s.review ?? 'none', checkedAt: new Date(s.checkedAt).toISOString() }
       }),
       dismissed: gone,
       isHidden: hidden,

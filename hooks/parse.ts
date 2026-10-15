@@ -166,7 +166,7 @@ export function ciSummary(all: readonly Check[] | null | undefined): CI {
   return 'pass'
 }
 
-export const PR_FIELDS = 'title,author,state,isDraft,reviewDecision,statusCheckRollup,reviewRequests,latestReviews,additions,deletions'
+export const PR_FIELDS = 'title,author,state,isDraft,reviewDecision,statusCheckRollup,reviewRequests,latestReviews,additions,deletions,mergeable'
 
 export type Fetched = {
   state: PrState
@@ -176,6 +176,7 @@ export type Fetched = {
   author?: string
   additions?: number
   deletions?: number
+  hasConflict?: boolean
 }
 
 // Review apps whose comments are not a person asking for a change.
@@ -194,6 +195,7 @@ export function parsePrJson(stdout: string): Fetched | undefined {
     latestReviews?: { author?: { login?: string } | null; state?: string }[] | null
     additions?: number
     deletions?: number
+    mergeable?: string
   }
   try {
     pr = JSON.parse(stdout)
@@ -224,6 +226,8 @@ export function parsePrJson(stdout: string): Fetched | undefined {
   const title = typeof pr.title === 'string' ? pr.title : undefined
   const author = pr.author?.login || undefined
   const hasDiff = typeof pr.additions === 'number' && typeof pr.deletions === 'number'
+  // GitHub works mergeability out lazily: UNKNOWN until then, so only CONFLICTING counts.
+  const hasConflict = isLive && pr.mergeable === 'CONFLICTING'
 
   return {
     state,
@@ -232,6 +236,7 @@ export function parsePrJson(stdout: string): Fetched | undefined {
     ...(title ? { title } : {}),
     ...(author ? { author } : {}),
     ...(hasDiff ? { additions: pr.additions, deletions: pr.deletions } : {}),
+    ...(hasConflict ? { hasConflict } : {}),
   }
 }
 
@@ -251,6 +256,7 @@ export const shouldPoll = (s: PrStatus | undefined, now: number, windowMs: numbe
 
 const PR_GLYPH: Record<PrState, string> = { open: '🟢', draft: '📝', merged: '🟣', closed: '⚫' }
 const CI_GLYPH: Record<CI, string> = { pass: '✅', fail: '❌', running: '⏳', none: '' }
+const CONFLICT_GLYPH = '💥'
 const RV_GLYPH: Record<Review, string> = { approved: '👍', pending: '👀', changes: '✋', unassigned: '🦯', commented: '💬' }
 
 export type Glyphs = { pr: string; ci: string; rv: string; isPending: boolean }
@@ -262,7 +268,10 @@ export function statusGlyphs(s: PrStatus | undefined): Glyphs {
   // A draft is not asking for review yet, so no reviewer is not news.
   const rv = !s.review || (s.state === 'draft' && s.review === 'unassigned') ? '' : RV_GLYPH[s.review]
 
-  return { pr: PR_GLYPH[s.state], ci: CI_GLYPH[s.ci], rv, isPending: false }
+  // A conflict blocks the merge whatever CI says, so it takes the CI cell.
+  const ci = s.hasConflict ? CONFLICT_GLYPH : CI_GLYPH[s.ci]
+
+  return { pr: PR_GLYPH[s.state], ci, rv, isPending: false }
 }
 
 // What the 5-minute watch re-checks: open and draft PRs, and ones not read yet. Merged

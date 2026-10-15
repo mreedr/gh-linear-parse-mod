@@ -428,3 +428,16 @@ test('a draft with no reviewer shows no review glyph; an open one shows 🦯', (
   expect(statusGlyphs({ state: 'draft', ci: 'pass', review: 'unassigned', checkedAt: 0 }).rv).toBe('')
   expect(statusGlyphs({ state: 'open', ci: 'pass', review: 'unassigned', checkedAt: 0 }).rv).toBe('🦯')
 })
+
+test('a merge conflict on an open PR takes the CI cell as 💥', () => {
+  const at = (state: string, mergeable: string, isDraft = false) =>
+    parsePrJson(JSON.stringify({ state, isDraft, reviewDecision: null, statusCheckRollup: [], mergeable }))
+  expect(at('OPEN', 'CONFLICTING')?.hasConflict).toBe(true)
+  expect(at('OPEN', 'CONFLICTING', true)?.hasConflict).toBe(true)
+  // GitHub has not worked it out yet, or the PR is done.
+  expect(at('OPEN', 'UNKNOWN')?.hasConflict).toBeUndefined()
+  expect(at('OPEN', 'MERGEABLE')?.hasConflict).toBeUndefined()
+  expect(at('MERGED', 'CONFLICTING')?.hasConflict).toBeUndefined()
+  expect(statusGlyphs({ state: 'open', ci: 'pass', hasConflict: true, checkedAt: 0 }).ci).toBe('💥')
+  expect(statusGlyphs({ state: 'open', ci: 'pass', checkedAt: 0 }).ci).toBe('✅')
+})

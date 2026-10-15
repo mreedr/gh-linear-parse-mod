@@ -15,6 +15,7 @@ export type PrStatus = {
   author?: string
   additions?: number
   deletions?: number
+  hasConflict?: boolean
   checkedAt: number
   ciSince?: number
 }
