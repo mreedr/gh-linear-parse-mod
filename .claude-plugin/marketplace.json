@@ -1,0 +1,6 @@
+{
+  "name": "gh-linear-parse-mod",
+  "description": "A Claude Code mod that lists the GitHub PR and Linear links discussed in a session above the prompt",
+  "owner": { "name": "mreedr" },
+  "plugins": [{ "name": "gh-linear-parse-mod", "source": "./" }]
+}

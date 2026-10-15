@@ -1,0 +1,17 @@
+{
+  "name": "gh-linear-parse-mod",
+  "version": "0.1.0",
+  "description": "Band above the prompt listing the GitHub PR and Linear links discussed in the session (your prompts and the assistant's answers); /gh-linear-parse-mod toggles it",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "mreedr"
+  },
+  "userConfig": {
+    "browser": {
+      "type": "string",
+      "title": "Browser",
+      "description": "App to open links in on macOS, such as \"Brave Browser\" or \"Google Chrome\". Empty opens the system default browser. Chromium browsers switch to a tab already on the link.",
+      "default": ""
+    }
+  }
+}
