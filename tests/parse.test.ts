@@ -303,6 +303,12 @@ describe('linkLabel', () => {
   test('another Linear page is its kind and name, the trailing id dropped', () => {
     expect(linkLabel('https://linear.app/acme/project/new-onboarding-0a1b2c3d4e5f')).toEqual({ project: 'project', ref: 'new onboarding' })
     expect(linkLabel('https://linear.app/acme/inbox')).toEqual({ project: 'inbox', ref: '' })
+    // Two tabs of one project read apart.
+    expect(linkLabel('https://linear.app/acme/project/new-onboarding-0a1b2c3d4e5f/overview')).toEqual({
+      project: 'project',
+      ref: 'new onboarding · overview',
+    })
+    expect(linkLabel('https://linear.app/acme/project/new-onboarding-0a1b2c3d4e5f/activity')?.ref).toBe('new onboarding · activity')
   })
 })
 

@@ -4,7 +4,7 @@ A Claude Code mod that keeps the GitHub PR and Linear links discussed in a sessi
 It reads your prompts and the assistant's answers (not tool results), and on first load it backfills links already in the transcript.
 Pressing a link opens it in your default browser, or in the browser the `browser` option names.
 The band has up to three sections, each under its own header row: Status (Claude's status line), GitHub, then Linear.
-PRs show as `repo | #N`; Linear issues show as `ENG-123 | slug words`.
+PRs show as `repo | #N`; Linear issues show as `ENG-123 | slug words`, and other Linear pages as `project | name`, followed by the tab when the link names one (`project | new onboarding · overview`).
 Each PR is followed by its author's first two letters (`mr` for mreedr), its lines added and deleted (`+120 -34`, in green and red), and a short, gray form of its title: a conventional-commit scope becomes a tag, ticket references and clauses such as `when ...` or `once ...` are dropped, and the rest is cut at the band's edge.
 The line counts are never cut; on a band too narrow for them the row shows the title alone.
 Each Linear issue is followed by its workflow status (`In progress`, `In review`), read through the session's Linear MCP server.

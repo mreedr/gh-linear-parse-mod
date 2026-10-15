@@ -286,14 +286,17 @@ export type Label = { project: string; ref: string }
 // Dashes become spaces, except inside numbers such as dates.
 const words = (slug: string) => slug.replace(/-[0-9a-f]{8,}$/i, '').replace(/(?<!\d)-|-(?!\d)/g, ' ')
 
-// GitHub PRs read `repo | #N`; Linear issues `ENG-1 | slug words`, other Linear pages `kind | name`.
+// GitHub PRs read `repo | #N`; Linear issues `ENG-1 | slug words`, other Linear pages
+// `kind | name`, then the tab when the link names one (`· overview`), so two tabs of one
+// project read apart.
 export function linkLabel(url: string): Label {
   const pr = prRef(url)
   if (pr) return { project: pr.repo.split('/')[1] ?? pr.repo, ref: `#${pr.number}` }
 
-  const [, kind = '', id = '', slug = ''] = url.replace(/^https?:\/\/[^/]+\//, '').split('/')
-  if (kind === 'issue' && id) return { project: id.toUpperCase(), ref: words(slug) }
-  return { project: kind, ref: words(id) }
+  const [, kind = '', id = '', ...rest] = url.replace(/^https?:\/\/[^/]+\//, '').split('/')
+  if (kind === 'issue' && id) return { project: id.toUpperCase(), ref: words(rest[0] ?? '') }
+  const tab = rest.filter(Boolean).join('/')
+  return { project: kind, ref: tab ? `${words(id)} · ${tab}` : words(id) }
 }
 
 // PRs above Linear links, each group keeping its order.
