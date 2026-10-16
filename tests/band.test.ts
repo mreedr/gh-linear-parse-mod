@@ -598,6 +598,99 @@ test('add <url> puts a link in the band, brings back a dismissed one and shows a
   expect(calls).toEqual(['1', '1'])
 })
 
+test('group_prs lays out the GitHub section; group asks Claude and group clear drops it', async ($, on) => {
+  const prompts: unknown[] = []
+  on('prompt.submit', async (_$, e) => {
+    prompts.push(e)
+    return { text: e.text }
+  })
+  mock.store(on)
+  const clock = mock.clock(on)
+  on('process.run', async () => ran(pr('OPEN')))
+  const command = async (args: string) =>
+    String(
+      (
+        await $.command.run({
+          command: 'gh-linear-parse-mod',
+          args,
+          origin: { kind: 'composer' as const },
+          presentation: { isFullscreen: true, columns: 120 },
+        })
+      ).text,
+    )
+  const group = async (groups: unknown) =>
+    String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__group_prs', groups } as never)).result)
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+  const mount = () => $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const lines = async () =>
+    (await (await mount()).findAll({ type: 'Box' }))
+      .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
+      .map(b => b.text.replace(/^x/, '').trim())
+
+  expect(await command('group by merge order')).toBe('Asked Claude to group the PRs in the band.')
+  await clock.advance(10)
+  const asked = prompts.at(-1) as { text: string; origin: { asUser?: boolean } }
+  expect(asked.text).toContain('mcp__gh-linear-parse-mod__group_prs: by merge order.')
+  expect(asked.origin.asUser).toBe(true)
+
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2 https://github.com/a/c/pull/3'))
+  await clock.advance(10)
+  expect(
+    await group([
+      { label: 'round 1', prs: ['c#3', 'https://github.com/a/b/pull/1'] },
+      { label: 'round 2', text: 'run the checks after round 1' },
+      { text: 'a note', prs: ['a/d#4', 'nope'] },
+    ]),
+  ).toBe(
+    'Grouped the GitHub section: round 1 (2 PRs), round 2 (0 PRs), text (1 PR). Skipped (not a PR link, owner/repo#N, or a repo#N in the band): nope.',
+  )
+  await clock.advance(10)
+  expect(await lines()).toEqual([
+    '── round 1 ──',
+    '🟢    🦯 c | #3',
+    '🟢    🦯 b | #1',
+    '── round 2 ──',
+    'run the checks after round 1',
+    'a note',
+    '🟢    🦯 d | #4',
+    '── other ──',
+    '🟢    🦯 b | #2',
+  ])
+  expect((await band()).groups[0]).toEqual({ label: 'round 1', prs: ['https://github.com/a/c/pull/3', 'https://github.com/a/b/pull/1'] })
+
+  // A mention does not move a grouped PR; x on a PR or a label takes it out.
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
+  const ui = await mount()
+  await ui.press({ key: 'dismiss:github:a/c#3' })
+  await ui.press({ key: 'dismiss:group-label:1' })
+  expect(await lines()).toEqual(['── round 1 ──', '🟢    🦯 b | #1', 'a note', '🟢    🦯 d | #4', '── other ──', '🟢    🦯 b | #2'])
+
+  expect(await command('group clear')).toBe('Grouping cleared; the GitHub section is newest first again.')
+  expect((await band()).groups).toBe(null)
+  expect(await lines()).toEqual(['🟢    🦯 b | #1', '🟢    🦯 d | #4', '🟢    🦯 b | #2'])
+  expect(await group([])).toBe('Grouping cleared; the GitHub section is newest first again.')
+})
+
+test('a resumed session gets its PR groups back', async ($, on) => {
+  const clock = world(on)
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('session.end', async (_$, e) => ({ sessionId: e.sessionId }))
+  on('command.register', async (_$, e) => ({ value: { command: e.name } }))
+  on('tool.register', async (_$, e) => ({ value: { tool: e.name } }))
+  on('session.id', async () => ({ value: 's1' }))
+  on('process.run', async () => ran(pr('OPEN')))
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2'))
+  await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__group_prs', groups: [{ label: 'first', text: 'then the rest', prs: ['b#2'] }] } as never)
+  await clock.advance(10)
+
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  expect((await band()).groups).toBe(null)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(10)
+  expect((await band()).groups).toEqual([{ label: 'first', text: 'then the rest', prs: ['https://github.com/a/b/pull/2'] }])
+})
+
 test('a session start redraws the band and drops the old Diff setting', async ($, on) => {
   on('prompt.submit', async (_$, e) => ({ text: e.text }))
   mock.clock(on)

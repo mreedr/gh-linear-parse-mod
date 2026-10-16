@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { BoxProps, EngineInterface, Register } from 'claude-code'
 
-import type { StatusNote, BandColor, IssueStatus, Item, PrStatus } from '../types'
+import type { StatusNote, BandColor, IssueStatus, Item, PrGroup, PrStatus } from '../types'
 import { openLink } from './browser'
 import {
   PR_FIELDS,
@@ -13,6 +13,7 @@ import {
   diffParts,
   extractLinks,
   fitText,
+  githubRows,
   isIssueDone,
   isIssueKey,
   isPrKey,
@@ -27,6 +28,7 @@ import {
   nextStatus,
   parseColorArgs,
   parseIssueResult,
+  parseGroups,
   parsePrJson,
   prRef,
   shortTitle,
@@ -34,6 +36,7 @@ import {
   statusGlyphs,
   textWidth,
   watchKeys,
+  withoutPrs,
 } from './parse'
 
 type $ = EngineInterface
@@ -50,6 +53,7 @@ const isWatching = atom({ plugin: 'gh-linear-parse-mod', key: 'isWatching' } as 
 const issueStatuses = atom({ plugin: 'gh-linear-parse-mod', key: 'issueStatuses' } as const, {} as Record<string, IssueStatus>)
 const refreshing = atom({ plugin: 'gh-linear-parse-mod', key: 'refreshing' } as const, 0)
 const agentStatus = atom({ plugin: 'gh-linear-parse-mod', key: 'agentStatus' } as const, null as StatusNote | null)
+const prGroups = atom({ plugin: 'gh-linear-parse-mod', key: 'prGroups' } as const, null as PrGroup[] | null)
 
 const SHOWN = 5
 const MAX_STORED = 40
@@ -59,6 +63,7 @@ const MAX_DISMISSED = 500
 const TEXT_COLOR = '#8b95b8'
 const STATE_TOOL = 'mcp__gh-linear-parse-mod__links_band'
 const STATUS_TOOL = 'mcp__gh-linear-parse-mod__set_status'
+const GROUP_TOOL = 'mcp__gh-linear-parse-mod__group_prs'
 const MAX_STATUS = 120
 const RECHECK_MS = 15_000
 const CI_POLL_MS = 90_000
@@ -85,7 +90,7 @@ async function record($: $, text: string): Promise<string[]> {
 const isChecked = (key: string) => isPrKey(key) || isIssueKey(key)
 
 const HELP =
-  'Use no option to show or hide the band, or one of: add <url>, on, off, refresh, clear, reset, watch on|off, nudge on|off, color <color> [fill] (a color name alone works too).'
+  'Use no option to show or hide the band, or one of: add <url>, group [how], group clear, on, off, refresh, clear, reset, watch on|off, nudge on|off, color <color> [fill] (a color name alone works too).'
 
 const NUDGE = {
   id: 'gh-linear-parse-mod:status-nudge',
@@ -106,17 +111,20 @@ const SAVED_SESSIONS = 30
 const isItem = (x: unknown): x is Item =>
   typeof x === 'object' && x !== null && typeof (x as Item).key === 'string' && typeof (x as Item).url === 'string'
 
+const isGroup = (x: unknown): x is PrGroup =>
+  typeof x === 'object' && x !== null && Array.isArray((x as PrGroup).prs) && (x as PrGroup).prs.every(k => typeof k === 'string')
+
 // Each session's links and dismissals, kept across restarts so a resumed session gets
 // its band back even when compaction took the links out of the transcript.
 async function persist($: $) {
   try {
     const id = await $.session.id()
-    const [list, gone] = await Promise.all([read($, items), read($, dismissed)])
+    const [list, gone, groups] = await Promise.all([read($, items), read($, dismissed), read($, prGroups)])
     const saved = await $.store.get('sessions')
     const index = Array.isArray(saved) ? saved.filter((s): s is string => typeof s === 'string') : []
     const ids = [id, ...index.filter(s => s !== id)]
     for (const old of ids.slice(SAVED_SESSIONS)) await $.store.delete(`links:${old}`)
-    await $.store.set(`links:${id}`, { items: list, dismissed: gone })
+    await $.store.set(`links:${id}`, { items: list, dismissed: gone, groups })
     await $.store.set('sessions', ids.slice(0, SAVED_SESSIONS))
   } catch {
     // an unsaved band is rebuilt from the transcript on resume
@@ -125,12 +133,14 @@ async function persist($: $) {
 
 async function restore($: $) {
   if ((await read($, items)).length > 0) return
-  const saved = (await $.store.get(`links:${await $.session.id()}`)) as { items?: unknown; dismissed?: unknown } | undefined
+  const saved = (await $.store.get(`links:${await $.session.id()}`)) as { items?: unknown; dismissed?: unknown; groups?: unknown } | undefined
   if (!saved || !Array.isArray(saved.items)) return
   const list = saved.items.filter(isItem)
   const gone = Array.isArray(saved.dismissed) ? saved.dismissed.filter((k): k is string => typeof k === 'string') : []
   await update($, dismissed, keys => (keys.length > 0 ? keys : gone))
   await update($, items, current => (current.length > 0 ? current : list))
+  const groups = Array.isArray(saved.groups) ? saved.groups.filter(isGroup) : []
+  if (groups.length > 0) await update($, prGroups, current => current ?? groups)
   refreshSoon($, list.map(i => i.key).filter(isChecked))
 }
 
@@ -300,6 +310,7 @@ async function refreshAll($: $): Promise<number> {
 async function dismiss($: $, key: string) {
   await update($, dismissed, keys => addKey(keys, key, MAX_DISMISSED))
   await update($, items, list => list.filter(i => i.key !== key))
+  await update($, prGroups, groups => groups && withoutPrs(groups, [key]))
   await persist($)
   await update($, prStatuses, ({ [key]: _, ...rest }) => rest)
   await update($, issueStatuses, ({ [key]: _, ...rest }) => rest)
@@ -314,9 +325,22 @@ async function sweep($: $) {
   if (keys.length === 0) return
   await update($, dismissed, gone => keys.reduce((acc, k) => addKey(acc, k, MAX_DISMISSED), gone))
   await update($, items, list => list.filter(i => !keys.includes(i.key)))
+  await update($, prGroups, groups => groups && withoutPrs(groups, keys))
   await persist($)
   await update($, prStatuses, s => Object.fromEntries(Object.entries(s).filter(([k]) => !keys.includes(k))))
 }
+
+async function setGroups($: $, groups: PrGroup[] | null) {
+  await update($, prGroups, () => (groups && groups.length > 0 ? groups : null))
+  await persist($)
+}
+
+const groupPrompt = (how: string) =>
+  `Group the PRs in the links band above the prompt with ${GROUP_TOOL}` +
+  (how
+    ? `: ${how}.`
+    : '. Pick labels that fit the work, such as the order to merge or roll them out in, and add text-only groups for steps in between where they help.') +
+  ` Read ${STATE_TOOL} first for the PRs and their state.`
 
 // Cells the frame takes across: a border and its padding, or a fill's padding.
 const frameColumns = (style: BandColor | null) => (!style ? 0 : style.isFill ? 2 : 4)
@@ -346,7 +370,7 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await $.command.register({
       name: 'gh-linear-parse-mod',
-      description: 'Toggle the GitHub/Linear links band (args: add <url>, on, off, clear, reset, refresh, watch on|off, color <color> [fill])',
+      description: 'Toggle the GitHub/Linear links band (args: add <url>, group [how], group clear, on, off, clear, reset, refresh, watch on|off, color <color> [fill])',
     })
     const stored = await $.store.get('isHidden')
     if (typeof stored === 'boolean') await update($, isHidden, () => stored)
@@ -374,6 +398,30 @@ export const register: Register = (on, options) => {
       },
       isDeferred: false,
     })
+    await $.tool.register({
+      name: 'group_prs',
+      description:
+        "Sets how the GitHub section of the gh-linear-parse-mod links band is grouped: a list of groups, top to bottom, each with an optional label (a divider such as \"round 1\" or \"blocked\"), an optional line of text, and optional PRs (PR links, owner/repo#N, or repo#N for a PR already in the band). A group with only a label or text is informational, such as a step between rounds. Sends the whole layout each time and replaces the last one; an empty list clears it. PRs not in any group show under \"other\". Use it only when the person asks you to group or order PRs (for example through /gh-linear-parse-mod group), or to keep a grouping they asked for current.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          groups: {
+            type: 'array',
+            description: 'The groups, top to bottom; empty clears the grouping.',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', description: 'The divider text, under 60 characters.' },
+                text: { type: 'string', description: 'A line of text under the label, under 200 characters.' },
+                prs: { type: 'array', items: { type: 'string' }, description: 'The PRs in this group, in order.' },
+              },
+            },
+          },
+        },
+        required: ['groups'],
+      },
+      isDeferred: false,
+    })
 
     const known = Object.values(await read($, prStatuses))
     if (known.some(s => s.ci === 'running')) ensurePolling($)
@@ -397,6 +445,7 @@ export const register: Register = (on, options) => {
       await update($, isExpanded, () => false)
       await update($, hasBackfilled, () => false)
       await update($, agentStatus, () => null)
+      await update($, prGroups, () => null)
     }
 
     return next(e)
@@ -413,6 +462,9 @@ export const register: Register = (on, options) => {
       read($, isWatching),
     ])
     const issues = await read($, issueStatuses)
+    const groups = await read($, prGroups)
+    const grouped = new Set(groups?.flatMap(g => g.prs) ?? [])
+    const ungrouped = links.filter(i => !grouped.has(i.key)).length
     const state = {
       links: links.map(i => {
         const s = known[i.key]
@@ -425,7 +477,8 @@ export const register: Register = (on, options) => {
       dismissed: gone,
       isHidden: hidden,
       isExpanded: expanded,
-      shownInBand: hidden ? 0 : expanded ? links.length : Math.min(links.length, SHOWN),
+      shownInBand: hidden ? 0 : links.length - ungrouped + (expanded ? ungrouped : Math.min(ungrouped, SHOWN)),
+      groups: groups && groups.map(g => ({ ...g, prs: g.prs.map(k => links.find(i => i.key === k)?.url ?? k) })),
       isWatching: watching,
       isNudging: await isNudging($),
       agentStatus: (st => (st ? { text: st.text, setAt: new Date(st.setAt).toISOString() } : null))(await read($, agentStatus)),
@@ -441,6 +494,27 @@ export const register: Register = (on, options) => {
     const setAt = await $.clock.now()
     await update($, agentStatus, () => (text ? { text, setAt } : null))
     return { result: text ? `Status set: ${text}` : 'Status cleared.' }
+  })
+
+  on('tool.call', { tool: GROUP_TOOL }, async ($, e) => {
+    const { groups, links, skipped, repeated } = parseGroups(e.groups, await read($, items))
+    const keys = links.map(l => l.key)
+    await update($, dismissed, gone => gone.filter(k => !keys.includes(k)))
+    const have = new Set((await read($, items)).map(i => i.key))
+    const fresh = links.filter(l => !have.has(l.key))
+    if (fresh.length > 0) await update($, items, list => mergeLinks(list, fresh, MAX_STORED))
+    await setGroups($, groups)
+    refreshSoon($, fresh.map(l => l.key), true)
+    const notes = [
+      skipped.length > 0 && `Skipped (not a PR link, owner/repo#N, or a repo#N in the band): ${skipped.join(', ')}.`,
+      repeated.length > 0 && `Already in an earlier group, so left there: ${repeated.join(', ')}.`,
+    ].filter(Boolean)
+    const summary =
+      groups.length === 0
+        ? 'Grouping cleared; the GitHub section is newest first again.'
+        : `Grouped the GitHub section: ${groups.map(g => `${g.label ?? (g.text ? 'text' : 'unlabeled')} (${g.prs.length} PR${g.prs.length === 1 ? '' : 's'})`).join(', ')}.`
+
+    return { result: [summary, ...notes].join(' ') }
   })
 
   on('command.run', { command: 'gh-linear-parse-mod' }, async ($, e) => {
@@ -466,7 +540,18 @@ export const register: Register = (on, options) => {
         text: `Band ${parsed.value.isFill ? 'fill' : 'border'} set to ${parsed.value.color} for this session.`,
       }
     }
+    if (verb === 'group') {
+      if (words.join(' ') === 'clear') {
+        await setGroups($, null)
+        return { text: 'Grouping cleared; the GitHub section is newest first again.' }
+      }
+      // Submitted from a timer, since a command's own hook cannot start a turn.
+      const text = groupPrompt(words.join(' '))
+      $.clock.after(1, () => void $.prompt.submit({ text, asUser: true }).catch(() => undefined))
+      return { text: 'Asked Claude to group the PRs in the band.' }
+    }
     if (arg === 'clear') {
+      await update($, prGroups, () => null)
       await update($, items, () => [])
       await update($, prStatuses, () => ({}))
       await update($, issueStatuses, () => ({}))
@@ -560,20 +645,26 @@ export const register: Register = (on, options) => {
     if (list.length === 0 && !note) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
-    const more = list.length - SHOWN
+    const groups = (await read($, prGroups)) ?? []
+    const grouped = new Set(groups.flatMap(g => g.prs))
+    // Grouped PRs always show; Show N more collapses the rest.
+    const rest = list.filter(i => !grouped.has(i.key))
+    const more = rest.length - SHOWN
     const expanded = more > 0 && (await read($, isExpanded))
     const style = await read($, bandColor)
     const known = await read($, prStatuses)
-    const visible = list.slice(0, expanded ? list.length : SHOWN)
+    const visible = rest.slice(0, expanded ? rest.length : SHOWN)
     const issues = await read($, issueStatuses)
     const updatedAt = lastChecked(list.map(i => i.key), { ...known, ...issues })
     const isRefreshing = (await read($, refreshing)) > 0
-    const { github, linear } = bandGroups(visible)
+    const { github: ungrouped, linear } = bandGroups(visible)
+    const githubLayout = githubRows(groups, list, ungrouped)
+    const github = githubLayout.flatMap(r => (r.kind === 'pr' ? [r.item] : []))
     const hasPr = github.length > 0
     const hasIssueSlot = linear.some(i => issues[i.key])
     const canSweep = list.some(i => isFinished(known[i.key]))
     const canRefresh = list.some(i => isPrKey(i.key)) || Object.keys(issues).some(k => list.some(i => i.key === k))
-    const labels = new Map(visible.map(i => [i.key, linkLabel(i.url)]))
+    const labels = new Map([...github, ...linear].map(i => [i.key, linkLabel(i.url)]))
     // Each group is its own table, with its own project width.
     const width = (group: Item[]) => Math.max(0, ...group.map(i => labels.get(i.key)?.project.length ?? 0))
     const widths = { github: width(github), linear: width(linear) }
@@ -681,6 +772,34 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    const dropGroup = (group: number) => setGroups($, groups.filter((_, n) => n !== group))
+    const dropText = (group: number) =>
+      setGroups($, withoutPrs(groups.map((g, n): PrGroup => (n === group ? { prs: g.prs, ...(g.label && { label: g.label }) } : g)), []))
+    // A group's label is a dim divider and its text a dim italic line; x on either drops it.
+    const githubRow = (r: (typeof githubLayout)[number]) => {
+      if (r.kind === 'pr') return row(r.item)
+      const key = r.group === undefined ? 'group-other' : `group-${r.kind}:${r.group}`
+      const text = r.kind === 'label' ? `── ${r.text} ──` : `   ${r.text}`
+      return (
+        <Box key={key} flexDirection="row" gap={1}>
+          {r.group === undefined ? (
+            <Box key="pad" width={1} />
+          ) : (
+            <Button
+              key={`dismiss:${key}`}
+              label="x"
+              plain
+              dimColor
+              onPress={() => (r.kind === 'label' ? dropGroup(r.group!) : dropText(r.group!))}
+            />
+          )}
+          <Text dimColor italic={r.kind === 'text'}>
+            {fitText(text, room)}
+          </Text>
+        </Box>
+      )
+    }
+
     const noteTime = note ? `  ${clockTime(note.setAt)}` : ''
     const statusSection = note && [
       section('status-header', 'Status', []),
@@ -742,8 +861,8 @@ export const register: Register = (on, options) => {
           <Button key="hide" label="Hide" plain dimColor onPress={() => setHidden($, true)} />
         </Box>
         {statusSection}
-        {hasPr && section('github-header', 'GitHub', ['PR', 'CI', 'Rv'])}
-        {github.map(row)}
+        {githubLayout.length > 0 && section('github-header', 'GitHub', ['PR', 'CI', 'Rv'])}
+        {githubLayout.map(githubRow)}
         {linear.length > 0 && section('linear-header', 'Linear', hasIssueSlot ? ['St'] : [])}
         {linear.map(row)}
       </Box>

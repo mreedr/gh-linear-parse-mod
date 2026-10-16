@@ -1,4 +1,4 @@
-import type { BandColor, CI, IssueStatus, IssueType, Item, PrState, PrStatus, Review } from '../types'
+import type { BandColor, CI, IssueStatus, IssueType, Item, PrGroup, PrState, PrStatus, Review } from '../types'
 
 export type Link = Item
 
@@ -422,3 +422,81 @@ export const isIssueDone = (s: IssueStatus | undefined) =>
 // Linear issues the 5-minute watch re-checks: all but the finished ones.
 export const issueWatchKeys = (keys: readonly string[], known: Readonly<Record<string, IssueStatus>>) =>
   keys.filter(k => isIssueKey(k) && !isIssueDone(known[k]))
+
+const MAX_GROUPS = 20
+const MAX_LABEL = 60
+const MAX_GROUP_TEXT = 200
+
+const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '')
+
+// A PR link, `owner/repo#N`, or `repo#N` / `#N` naming exactly one PR already in the band.
+export function resolvePr(ref: string, band: readonly Item[]): Link | undefined {
+  const link = parseLink(ref)
+  if (link) return isPrKey(link.key) ? link : undefined
+  const full = ref.match(/^([\w.-]+)\/([\w.-]+)#(\d+)$/)
+  if (full) return githubLink([full[1]!, full[2]!, 'pull', full[3]!])
+  const short = ref.match(/^([\w.-]+)?#(\d+)$/)
+  if (!short) return undefined
+  const [, repo, n] = short
+  const matches = band.filter(i => {
+    const name = i.key.split('/')[1]
+    return isPrKey(i.key) && (repo ? name === `${repo.toLowerCase()}#${n}` : name?.endsWith(`#${n}`))
+  })
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+export type ParsedGroups = { groups: PrGroup[]; links: Link[]; skipped: string[]; repeated: string[] }
+
+// The group_prs input as groups of PR keys: unreadable refs are skipped and a PR
+// named twice stays in its first group.
+export function parseGroups(input: unknown, band: readonly Item[]): ParsedGroups {
+  const links: Link[] = []
+  const skipped: string[] = []
+  const repeated: string[] = []
+  const groups: PrGroup[] = []
+  for (const g of Array.isArray(input) ? input.slice(0, MAX_GROUPS) : []) {
+    if (typeof g !== 'object' || g === null) continue
+    const { label, text, prs } = g as { label?: unknown; text?: unknown; prs?: unknown }
+    const keys: string[] = []
+    for (const ref of Array.isArray(prs) ? prs : []) {
+      const raw = clean(ref, 300)
+      const link = raw ? resolvePr(raw, [...band, ...links]) : undefined
+      if (!link) {
+        if (raw) skipped.push(raw)
+        continue
+      }
+      if (links.some(l => l.key === link.key)) {
+        repeated.push(raw)
+        continue
+      }
+      keys.push(link.key)
+      links.push(link)
+    }
+    const l = clean(label, MAX_LABEL)
+    const t = clean(text, MAX_GROUP_TEXT)
+    if (l || t || keys.length > 0) groups.push({ ...(l && { label: l }), ...(t && { text: t }), prs: keys })
+  }
+  return { groups, links, skipped, repeated }
+}
+
+// Drops PRs from the groups, and any group left with nothing in it.
+export const withoutPrs = (groups: readonly PrGroup[], keys: readonly string[]): PrGroup[] =>
+  groups.map(g => ({ ...g, prs: g.prs.filter(k => !keys.includes(k)) })).filter(g => g.label || g.text || g.prs.length > 0)
+
+export type GithubRow =
+  | { kind: 'label'; group?: number; text: string }
+  | { kind: 'text'; group: number; text: string }
+  | { kind: 'pr'; item: Item }
+
+// The GitHub section top to bottom: each group's label, text and PRs, then the PRs in
+// no group (newest first) under `other`.
+export function githubRows(groups: readonly PrGroup[], band: readonly Item[], rest: readonly Item[]): GithubRow[] {
+  const byKey = new Map(band.map(i => [i.key, i]))
+  const rows: GithubRow[] = groups.flatMap((g, group): GithubRow[] => [
+    ...(g.label ? [{ kind: 'label' as const, group, text: g.label }] : []),
+    ...(g.text ? [{ kind: 'text' as const, group, text: g.text }] : []),
+    ...g.prs.flatMap(k => (byKey.has(k) ? [{ kind: 'pr' as const, item: byKey.get(k)! }] : [])),
+  ])
+  if (groups.length > 0 && rest.length > 0) rows.push({ kind: 'label', text: 'other' })
+  return [...rows, ...rest.map(item => ({ kind: 'pr' as const, item }))]
+}

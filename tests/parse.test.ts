@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
+  githubRows,
+  parseGroups,
+  resolvePr,
+  withoutPrs,
   isIssueKey,
   issueGlyph,
   issueId,
@@ -440,4 +444,62 @@ test('a merge conflict on an open PR takes the CI cell as 💥', () => {
   expect(at('MERGED', 'CONFLICTING')?.hasConflict).toBeUndefined()
   expect(statusGlyphs({ state: 'open', ci: 'pass', hasConflict: true, checkedAt: 0 }).ci).toBe('💥')
   expect(statusGlyphs({ state: 'open', ci: 'pass', checkedAt: 0 }).ci).toBe('✅')
+})
+
+describe('PR groups', () => {
+  const band = [
+    { key: 'github:acme/api#42', url: 'https://github.com/acme/api/pull/42' },
+    { key: 'github:acme/web#42', url: 'https://github.com/acme/web/pull/42' },
+    { key: 'github:acme/web#43', url: 'https://github.com/acme/web/pull/43' },
+  ]
+
+  test('a PR is a link, owner/repo#N, or a repo#N or #N naming one PR in the band', () => {
+    expect(resolvePr('https://github.com/acme/api/pull/42/files', band)?.key).toBe('github:acme/api#42')
+    expect(resolvePr('other/lib#7', band)).toEqual({ key: 'github:other/lib#7', url: 'https://github.com/other/lib/pull/7' })
+    expect(resolvePr('web#43', band)?.key).toBe('github:acme/web#43')
+    expect(resolvePr('#43', band)?.key).toBe('github:acme/web#43')
+    expect(resolvePr('#42', band)).toBeUndefined()
+    expect(resolvePr('cli#42', band)).toBeUndefined()
+    expect(resolvePr('https://github.com/acme/api', band)).toBeUndefined()
+    expect(resolvePr('https://linear.app/acme/issue/ENG-1/x', band)).toBeUndefined()
+  })
+
+  test('groups keep labels, text and PRs; unreadable and repeated PRs are reported', () => {
+    const parsed = parseGroups(
+      [
+        { label: ' round   1 ', prs: ['api#42', 'web#43', 'nope'] },
+        { label: 'round 2', text: 'run the checks after round 1' },
+        { text: 'just a note' },
+        { prs: ['https://github.com/acme/web/pull/43', 'other/lib#7'] },
+        {},
+        'junk',
+      ],
+      band,
+    )
+    expect(parsed.groups).toEqual([
+      { label: 'round 1', prs: ['github:acme/api#42', 'github:acme/web#43'] },
+      { label: 'round 2', text: 'run the checks after round 1', prs: [] },
+      { text: 'just a note', prs: [] },
+      { prs: ['github:other/lib#7'] },
+    ])
+    expect(parsed.links.map(l => l.key)).toEqual(['github:acme/api#42', 'github:acme/web#43', 'github:other/lib#7'])
+    expect(parsed.skipped).toEqual(['nope'])
+    expect(parsed.repeated).toEqual(['https://github.com/acme/web/pull/43'])
+    expect(parseGroups(undefined, band).groups).toEqual([])
+  })
+
+  test('rows run through the groups, then the rest under other', () => {
+    const [a, b, c] = band
+    const groups = [{ label: 'round 1', prs: [c!.key, 'github:gone/x#1'] }, { label: 'round 2', text: 'checks', prs: [] }]
+    expect(githubRows(groups, band, [a!])).toEqual([
+      { kind: 'label', group: 0, text: 'round 1' },
+      { kind: 'pr', item: c },
+      { kind: 'label', group: 1, text: 'round 2' },
+      { kind: 'text', group: 1, text: 'checks' },
+      { kind: 'label', text: 'other' },
+      { kind: 'pr', item: a },
+    ])
+    expect(githubRows([], band, [a!, b!])).toEqual([{ kind: 'pr', item: a }, { kind: 'pr', item: b }])
+    expect(withoutPrs([{ prs: [c!.key] }, { label: 'x', prs: [c!.key] }], [c!.key])).toEqual([{ label: 'x', prs: [] }])
+  })
 })

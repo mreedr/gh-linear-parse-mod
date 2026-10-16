@@ -56,6 +56,8 @@ If the named browser fails to open, the link opens in the default browser with a
 | --- | --- |
 | `/gh-linear-parse-mod` | Toggle the band (also `on`, `off`) |
 | `/gh-linear-parse-mod add <url>` | Add a GitHub PR or Linear link to the band and check its status now, even one dismissed with `x` (also shows a hidden band) |
+| `/gh-linear-parse-mod group [how]` | Ask Claude to group the PRs in the GitHub section, optionally saying how (`group by merge order`); see [PR groups](#pr-groups) |
+| `/gh-linear-parse-mod group clear` | Drop the grouping; the GitHub section goes back to newest first |
 | `/gh-linear-parse-mod clear` | Empty the band for this session |
 | `/gh-linear-parse-mod refresh` | Re-check the status of every PR and Linear issue in the band |
 | `/gh-linear-parse-mod watch on\|off` | Turn the 5-minute status refresh on or off (this session; on by default) |
@@ -111,6 +113,30 @@ A new status replaces the old one, and an empty text clears it.
 Press its `x` to clear it yourself; a `/clear` clears it too.
 With no links in the band, the band shows the status line alone.
 By default the mod adds a short section to the system prompt asking the agent to keep its status current; `/gh-linear-parse-mod nudge off` removes it in every session from the next request, and `nudge on` puts it back.
+
+## PR groups
+
+Claude groups the GitHub section only when asked: run `/gh-linear-parse-mod group`, or ask in your own words.
+It sets the layout with the `mcp__gh-linear-parse-mod__group_prs` tool, a list of groups from top to bottom, each with an optional label, an optional line of text and optional PRs.
+A group with no PRs is informational, such as a step between rounds.
+
+```
+PR CI Rv GitHub
+── round 1 ──
+🟢 ✅ 👍 api | #42 add the export endpoint
+🟢 ⏳ 🦯 web | #43 export button
+── round 2 ──
+   run the smoke checks on staging after round 1
+── other ──
+🟢 ✅ 👍 api | #46 fix typo
+```
+
+Labels are dim dividers and text is a dim italic line; PR rows draw as they always do.
+PRs in no group show under `other`, newest first, and mentioning a grouped PR does not move it.
+Grouped PRs always show; `Show N more` collapses only the rest.
+`x` on a PR, or 🧹, takes it out of its group; `x` on a label drops the group, and `x` on a text line drops the text.
+Merged PRs stay in their group, dimmed, until 🧹.
+The grouping is saved with the session's links, `links_band` reports it, and `group clear` or `clear` drops it.
 
 ## Develop
 

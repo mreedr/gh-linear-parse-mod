@@ -35,6 +35,13 @@ export type StatusNote = {
   setAt: number
 }
 
+// A group in the GitHub section, set through the group_prs tool: a label, a line of text, PRs (keys), or any mix.
+export type PrGroup = {
+  label?: string
+  text?: string
+  prs: string[]
+}
+
 export type BandColor = {
   color: string
   isFill: boolean
@@ -46,6 +53,8 @@ declare module 'claude-code' {
     'mcp__gh-linear-parse-mod__links_band': {}
     /** Sets or clears the status line at the top of the band. */
     'mcp__gh-linear-parse-mod__set_status': { text?: string }
+    /** Sets the GitHub section's groups, top to bottom; an empty list clears them. */
+    'mcp__gh-linear-parse-mod__group_prs': { groups?: { label?: string; text?: string; prs?: string[] }[] }
   }
 
   interface PluginState {
@@ -61,6 +70,7 @@ declare module 'claude-code' {
       isWatching: boolean
       refreshing: number
       agentStatus: StatusNote | null
+      prGroups: PrGroup[] | null
     }
   }
 }
