@@ -555,6 +555,28 @@ test('🧹 dismisses merged and closed PRs and shows only when there are some', 
   expect((await band()).links.map((l: { url: string }) => l.url)).not.toContain('https://github.com/a/b/pull/2')
 })
 
+test('👀 hides the PRs waiting on a review and shows them again', async ($, on) => {
+  const clock = world(on)
+  const asked = { reviewDecision: 'REVIEW_REQUIRED', reviewRequests: [{ login: 'x' }] }
+  const extra: Record<string, Record<string, unknown>> = { '1': asked, '3': asked }
+  on('process.run', async (_$, e) => ran(pr('OPEN', extra[e.argv[3]!] ?? {})))
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2 https://github.com/a/b/pull/3'))
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+
+  expect((await rows(ui)).map(b => b.text)).toEqual(['🟢    👀 b | #1', '🟢    🦯 b | #2', '🟢    👀 b | #3'])
+  expect((await ui.find({ key: 'awaiting-review' }))?.text).toBe('👀')
+  await ui.press({ key: 'awaiting-review' })
+  expect((await rows(ui)).map(b => b.text)).toEqual(['🟢    🦯 b | #2'])
+  expect((await ui.find({ key: 'awaiting-review' }))?.text).toBe('👀 2')
+  expect(await band()).toMatchObject({ hidesAwaitingReview: true, shownInBand: 1 })
+  expect(JSON.stringify(await ui.drawn())).toContain('Session links (3)')
+
+  await ui.press({ key: 'awaiting-review' })
+  expect((await rows(ui)).map(b => b.text)).toHaveLength(3)
+})
+
 test('add <url> puts a link in the band, brings back a dismissed one and shows a hidden band', async ($, on) => {
   const clock = world(on)
   const calls: string[] = []

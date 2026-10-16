@@ -10,6 +10,7 @@ test('links_band reports the band state', async $ => {
     isExpanded: false,
     shownInBand: 0,
     groups: null,
+    hidesAwaitingReview: false,
     isWatching: true,
     isNudging: true,
     agentStatus: null,

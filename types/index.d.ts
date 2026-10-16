@@ -71,6 +71,7 @@ declare module 'claude-code' {
       refreshing: number
       agentStatus: StatusNote | null
       prGroups: PrGroup[] | null
+      hidesAwaitingReview: boolean
     }
   }
 }

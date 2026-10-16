@@ -14,6 +14,7 @@ import {
   extractLinks,
   fitText,
   githubRows,
+  isAwaitingReview,
   isIssueDone,
   isIssueKey,
   isPrKey,
@@ -53,6 +54,7 @@ const isWatching = atom({ plugin: 'gh-linear-parse-mod', key: 'isWatching' } as 
 const issueStatuses = atom({ plugin: 'gh-linear-parse-mod', key: 'issueStatuses' } as const, {} as Record<string, IssueStatus>)
 const refreshing = atom({ plugin: 'gh-linear-parse-mod', key: 'refreshing' } as const, 0)
 const agentStatus = atom({ plugin: 'gh-linear-parse-mod', key: 'agentStatus' } as const, null as StatusNote | null)
+const hidesAwaitingReview = atom({ plugin: 'gh-linear-parse-mod', key: 'hidesAwaitingReview' } as const, false)
 const prGroups = atom({ plugin: 'gh-linear-parse-mod', key: 'prGroups' } as const, null as PrGroup[] | null)
 
 const SHOWN = 5
@@ -463,8 +465,10 @@ export const register: Register = (on, options) => {
     ])
     const issues = await read($, issueStatuses)
     const groups = await read($, prGroups)
+    const hidesReview = await read($, hidesAwaitingReview)
+    const inView = hidesReview ? links.filter(i => !isAwaitingReview(known[i.key])) : links
     const grouped = new Set(groups?.flatMap(g => g.prs) ?? [])
-    const ungrouped = links.filter(i => !grouped.has(i.key)).length
+    const ungrouped = inView.filter(i => !grouped.has(i.key)).length
     const state = {
       links: links.map(i => {
         const s = known[i.key]
@@ -477,7 +481,8 @@ export const register: Register = (on, options) => {
       dismissed: gone,
       isHidden: hidden,
       isExpanded: expanded,
-      shownInBand: hidden ? 0 : links.length - ungrouped + (expanded ? ungrouped : Math.min(ungrouped, SHOWN)),
+      shownInBand: hidden ? 0 : inView.length - ungrouped + (expanded ? ungrouped : Math.min(ungrouped, SHOWN)),
+      hidesAwaitingReview: hidesReview,
       groups: groups && groups.map(g => ({ ...g, prs: g.prs.map(k => links.find(i => i.key === k)?.url ?? k) })),
       isWatching: watching,
       isNudging: await isNudging($),
@@ -647,22 +652,27 @@ export const register: Register = (on, options) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const groups = (await read($, prGroups)) ?? []
     const grouped = new Set(groups.flatMap(g => g.prs))
+    const known = await read($, prStatuses)
+    // 👀 in the header hides the PRs waiting on a review, and shows them again.
+    const hidesReview = await read($, hidesAwaitingReview)
+    const awaiting = list.filter(i => isAwaitingReview(known[i.key])).length
+    const shown = hidesReview ? list.filter(i => !isAwaitingReview(known[i.key])) : list
     // Grouped PRs always show; Show N more collapses the rest.
-    const rest = list.filter(i => !grouped.has(i.key))
+    const rest = shown.filter(i => !grouped.has(i.key))
     const more = rest.length - SHOWN
     const expanded = more > 0 && (await read($, isExpanded))
     const style = await read($, bandColor)
-    const known = await read($, prStatuses)
     const visible = rest.slice(0, expanded ? rest.length : SHOWN)
     const issues = await read($, issueStatuses)
     const updatedAt = lastChecked(list.map(i => i.key), { ...known, ...issues })
     const isRefreshing = (await read($, refreshing)) > 0
     const { github: ungrouped, linear } = bandGroups(visible)
-    const githubLayout = githubRows(groups, list, ungrouped)
+    const githubLayout = githubRows(groups, shown, ungrouped)
     const github = githubLayout.flatMap(r => (r.kind === 'pr' ? [r.item] : []))
     const hasPr = github.length > 0
     const hasIssueSlot = linear.some(i => issues[i.key])
     const canSweep = list.some(i => isFinished(known[i.key]))
+    const reviewLabel = hidesReview ? `👀 ${awaiting}` : '👀'
     const canRefresh = list.some(i => isPrKey(i.key)) || Object.keys(issues).some(k => list.some(i => i.key === k))
     const labels = new Map([...github, ...linear].map(i => [i.key, linkLabel(i.url)]))
     // Each group is its own table, with its own project width.
@@ -814,7 +824,7 @@ export const register: Register = (on, options) => {
     const title = `Session links (${list.length})`
     const expandLabel = expanded ? 'Show less' : `Show ${more} more`
     // The time goes first when the header would not fit on one line.
-    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
+    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
     const headerLead = 2
     const headerNeeds = (withTime: boolean) =>
       headerLead + textWidth(title) + (withTime && updatedAt !== undefined ? 3 + textWidth(`updated ${clockTime(updatedAt)}`) : 0) +
@@ -846,6 +856,15 @@ export const register: Register = (on, options) => {
               plain
               dimColor
               onPress={() => void refreshAll($)}
+            />
+          )}
+          {awaiting > 0 && (
+            <Button
+              key="awaiting-review"
+              label={reviewLabel}
+              plain
+              dimColor={hidesReview}
+              onPress={() => update($, hidesAwaitingReview, v => !v)}
             />
           )}
           {canSweep && <Button key="sweep" label="🧹" plain onPress={() => sweep($)} />}

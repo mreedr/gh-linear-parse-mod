@@ -261,6 +261,9 @@ const RV_GLYPH: Record<Review, string> = { approved: '🚀', pending: '👀', ch
 
 export type Glyphs = { pr: string; ci: string; rv: string; isPending: boolean }
 
+// A PR that shows 👀: its review is requested and not given yet.
+export const isAwaitingReview = (s: PrStatus | undefined) => statusGlyphs(s).rv === RV_GLYPH.pending
+
 export function statusGlyphs(s: PrStatus | undefined): Glyphs {
   if (!s) return { pr: '…', ci: '', rv: '', isPending: true }
   if (s.state === 'unknown') return { pr: '?', ci: '', rv: '', isPending: true }
