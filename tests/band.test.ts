@@ -534,6 +534,27 @@ test('an unknown option shows the help and leaves the band as it is; a bare colo
   expect(String((await command('')).text)).toBe('Session links hidden.')
 })
 
+test('🧹 dismisses merged and closed PRs and shows only when there are some', async ($, on) => {
+  const clock = world(on)
+  const states: Record<string, string> = { '1': 'OPEN', '2': 'MERGED', '3': 'CLOSED' }
+  on('process.run', async (_$, e) => ran(pr(states[e.argv[3]!]!)))
+  await $.prompt.submit(
+    submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2 https://github.com/a/b/pull/3 https://linear.app/acme/issue/ENG-1/x'),
+  )
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+
+  expect((await ui.find({ key: 'sweep' }))?.text).toBe('🧹')
+  await ui.press({ key: 'sweep' })
+  expect((await rows(ui)).map(b => b.text)).toEqual(['🟢    🦯 b | #1', 'ENG-1 | x'])
+  expect((await band()).dismissed).toEqual(['github:a/b#2', 'github:a/b#3'])
+  expect(await ui.find({ key: 'sweep' })).toBe(undefined)
+
+  await $.prompt.submit(submit('https://github.com/a/b/pull/2'))
+  expect((await band()).links.map((l: { url: string }) => l.url)).not.toContain('https://github.com/a/b/pull/2')
+})
+
 test('add <url> puts a link in the band, brings back a dismissed one and shows a hidden band', async ($, on) => {
   const clock = world(on)
   const calls: string[] = []

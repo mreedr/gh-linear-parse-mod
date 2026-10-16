@@ -305,6 +305,19 @@ async function dismiss($: $, key: string) {
   await update($, issueStatuses, ({ [key]: _, ...rest }) => rest)
 }
 
+const isFinished = (s: PrStatus | undefined) => s?.state === 'merged' || s?.state === 'closed'
+
+// Dismisses the merged and closed PRs, so a later mention does not bring them back.
+async function sweep($: $) {
+  const known = await read($, prStatuses)
+  const keys = (await read($, items)).map(i => i.key).filter(k => isFinished(known[k]))
+  if (keys.length === 0) return
+  await update($, dismissed, gone => keys.reduce((acc, k) => addKey(acc, k, MAX_DISMISSED), gone))
+  await update($, items, list => list.filter(i => !keys.includes(i.key)))
+  await persist($)
+  await update($, prStatuses, s => Object.fromEntries(Object.entries(s).filter(([k]) => !keys.includes(k))))
+}
+
 // Cells the frame takes across: a border and its padding, or a fill's padding.
 const frameColumns = (style: BandColor | null) => (!style ? 0 : style.isFill ? 2 : 4)
 
@@ -558,6 +571,7 @@ export const register: Register = (on, options) => {
     const { github, linear } = bandGroups(visible)
     const hasPr = github.length > 0
     const hasIssueSlot = linear.some(i => issues[i.key])
+    const canSweep = list.some(i => isFinished(known[i.key]))
     const canRefresh = list.some(i => isPrKey(i.key)) || Object.keys(issues).some(k => list.some(i => i.key === k))
     const labels = new Map(visible.map(i => [i.key, linkLabel(i.url)]))
     // Each group is its own table, with its own project width.
@@ -681,7 +695,7 @@ export const register: Register = (on, options) => {
     const title = `Session links (${list.length})`
     const expandLabel = expanded ? 'Show less' : `Show ${more} more`
     // The time goes first when the header would not fit on one line.
-    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', more > 0 ? expandLabel : '', 'Hide']
+    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
     const headerLead = 2
     const headerNeeds = (withTime: boolean) =>
       headerLead + textWidth(title) + (withTime && updatedAt !== undefined ? 3 + textWidth(`updated ${clockTime(updatedAt)}`) : 0) +
@@ -715,6 +729,7 @@ export const register: Register = (on, options) => {
               onPress={() => void refreshAll($)}
             />
           )}
+          {canSweep && <Button key="sweep" label="🧹" plain onPress={() => sweep($)} />}
           {more > 0 && (
             <Button
               key="expand"
