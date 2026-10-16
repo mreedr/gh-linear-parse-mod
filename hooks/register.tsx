@@ -782,27 +782,14 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    const dropGroup = (group: number) => setGroups($, groups.filter((_, n) => n !== group))
-    const dropText = (group: number) =>
-      setGroups($, withoutPrs(groups.map((g, n): PrGroup => (n === group ? { prs: g.prs, ...(g.label && { label: g.label }) } : g)), []))
-    // A group's label is a dim divider and its text a dim italic line; x on either drops it.
+    // A group's label is a dim divider and its text a dim italic line.
     const githubRow = (r: (typeof githubLayout)[number]) => {
       if (r.kind === 'pr') return row(r.item)
       const key = r.group === undefined ? 'group-other' : `group-${r.kind}:${r.group}`
       const text = r.kind === 'label' ? `── ${r.text} ──` : `   ${r.text}`
       return (
         <Box key={key} flexDirection="row" gap={1}>
-          {r.group === undefined ? (
-            <Box key="pad" width={1} />
-          ) : (
-            <Button
-              key={`dismiss:${key}`}
-              label="x"
-              plain
-              dimColor
-              onPress={() => (r.kind === 'label' ? dropGroup(r.group!) : dropText(r.group!))}
-            />
-          )}
+          <Box key="pad" width={1} />
           <Text dimColor italic={r.kind === 'text'}>
             {fitText(text, room)}
           </Text>

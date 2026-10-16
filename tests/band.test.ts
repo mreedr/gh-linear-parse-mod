@@ -680,12 +680,21 @@ test('group_prs lays out the GitHub section; group asks Claude and group clear d
   ])
   expect((await band()).groups[0]).toEqual({ label: 'round 1', prs: ['https://github.com/a/c/pull/3', 'https://github.com/a/b/pull/1'] })
 
-  // A mention does not move a grouped PR; x on a PR or a label takes it out.
+  // A mention does not move a grouped PR; x on a PR takes it out, and the group rows have no x.
   await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
   const ui = await mount()
+  expect((await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('dismiss:group-'))).toEqual([])
   await ui.press({ key: 'dismiss:github:a/c#3' })
-  await ui.press({ key: 'dismiss:group-label:1' })
-  expect(await lines()).toEqual(['── round 1 ──', '🟢    🦯 b | #1', 'a note', '🟢    🦯 d | #4', '── other ──', '🟢    🦯 b | #2'])
+  expect(await lines()).toEqual([
+    '── round 1 ──',
+    '🟢    🦯 b | #1',
+    '── round 2 ──',
+    'run the checks after round 1',
+    'a note',
+    '🟢    🦯 d | #4',
+    '── other ──',
+    '🟢    🦯 b | #2',
+  ])
 
   expect(await command('group clear')).toBe('Grouping cleared; the GitHub section is newest first again.')
   expect((await band()).groups).toBe(null)

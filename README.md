@@ -134,7 +134,8 @@ PR CI Rv GitHub
 Labels are dim dividers and text is a dim italic line; PR rows draw as they always do.
 PRs in no group show under `other`, newest first, and mentioning a grouped PR does not move it.
 Grouped PRs always show; `Show N more` collapses only the rest.
-`x` on a PR, or 🧹, takes it out of its group; `x` on a label drops the group, and `x` on a text line drops the text.
+`x` on a PR, or 🧹, takes it out of its group.
+Labels and text lines have no `x`; ask Claude to change the grouping, or `group clear` to drop it.
 Merged PRs stay in their group, dimmed, until 🧹.
 The grouping is saved with the session's links, `links_band` reports it, and `group clear` or `clear` drops it.
 
