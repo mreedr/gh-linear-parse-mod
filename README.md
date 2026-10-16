@@ -55,6 +55,7 @@ If the named browser fails to open, the link opens in the default browser with a
 | Command | Effect |
 | --- | --- |
 | `/gh-linear-parse-mod` | Toggle the band (also `on`, `off`) |
+| `/gh-linear-parse-mod add <url>` | Add a GitHub PR or Linear link to the band and check its status now, even one dismissed with `x` (also shows a hidden band) |
 | `/gh-linear-parse-mod clear` | Empty the band for this session |
 | `/gh-linear-parse-mod refresh` | Re-check the status of every PR and Linear issue in the band |
 | `/gh-linear-parse-mod watch on\|off` | Turn the 5-minute status refresh on or off (this session; on by default) |

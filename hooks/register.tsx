@@ -85,7 +85,7 @@ async function record($: $, text: string): Promise<string[]> {
 const isChecked = (key: string) => isPrKey(key) || isIssueKey(key)
 
 const HELP =
-  'Use no option to show or hide the band, or one of: on, off, refresh, clear, reset, watch on|off, nudge on|off, color <color> [fill] (a color name alone works too).'
+  'Use no option to show or hide the band, or one of: add <url>, on, off, refresh, clear, reset, watch on|off, nudge on|off, color <color> [fill] (a color name alone works too).'
 
 const NUDGE = {
   id: 'gh-linear-parse-mod:status-nudge',
@@ -333,7 +333,7 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await $.command.register({
       name: 'gh-linear-parse-mod',
-      description: 'Toggle the GitHub/Linear links band (args: on, off, clear, reset, refresh, watch on|off, color <color> [fill])',
+      description: 'Toggle the GitHub/Linear links band (args: add <url>, on, off, clear, reset, refresh, watch on|off, color <color> [fill])',
     })
     const stored = await $.store.get('isHidden')
     if (typeof stored === 'boolean') await update($, isHidden, () => stored)
@@ -485,6 +485,18 @@ export const register: Register = (on, options) => {
     if (arg === 'refresh') {
       const count = await refreshAll($)
       return { text: `Refreshing ${count} link${count === 1 ? '' : 's'}.` }
+    }
+    if (verb === 'add') {
+      const found = extractLinks(words.join(' '))
+      if (found.length === 0) return { text: 'No GitHub PR or Linear link found. Use "add <url>".' }
+      const keys = found.map(l => l.key)
+      await update($, dismissed, gone => gone.filter(k => !keys.includes(k)))
+      refreshSoon($, await record($, words.join(' ')), true)
+      if (await read($, isHidden)) {
+        await setHidden($, false)
+        backfillSoon($)
+      }
+      return { text: `Added ${found.map(l => l.url).join(', ')}.` }
     }
     if (arg === 'reset') {
       await update($, dismissed, () => [])

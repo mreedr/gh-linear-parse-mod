@@ -534,6 +534,49 @@ test('an unknown option shows the help and leaves the band as it is; a bare colo
   expect(String((await command('')).text)).toBe('Session links hidden.')
 })
 
+test('add <url> puts a link in the band, brings back a dismissed one and shows a hidden band', async ($, on) => {
+  const clock = world(on)
+  const calls: string[] = []
+  on('process.run', async (_$, e) => {
+    calls.push(e.argv[3]!)
+    return ran(pr('OPEN'))
+  })
+  const command = async (args: string) =>
+    String(
+      (
+        await $.command.run({
+          command: 'gh-linear-parse-mod',
+          args,
+          origin: { kind: 'composer' as const },
+          presentation: { isFullscreen: true, columns: 120 },
+        })
+      ).text,
+    )
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+
+  expect(await command('add')).toBe('No GitHub PR or Linear link found. Use "add <url>".')
+  expect(await command('add https://github.com/a/b')).toBe('No GitHub PR or Linear link found. Use "add <url>".')
+
+  expect(await command('add https://github.com/a/b/pull/1')).toBe('Added https://github.com/a/b/pull/1.')
+  await clock.advance(10)
+  expect(calls).toEqual(['1'])
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  expect((await rows(ui)).map(b => b.text)).toEqual(['🟢    🦯 b | #1'])
+
+  await ui.press({ key: 'dismiss:github:a/b#1' })
+  await command('off')
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
+  expect((await band()).links).toEqual([])
+
+  await command('add https://github.com/a/b/pull/1')
+  await clock.advance(10)
+  const state = await band()
+  expect(state.links.map((l: { url: string }) => l.url)).toEqual(['https://github.com/a/b/pull/1'])
+  expect(state.dismissed).toEqual([])
+  expect(state.isHidden).toBe(false)
+  expect(calls).toEqual(['1', '1'])
+})
+
 test('a session start redraws the band and drops the old Diff setting', async ($, on) => {
   on('prompt.submit', async (_$, e) => ({ text: e.text }))
   mock.clock(on)
