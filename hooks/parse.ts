@@ -257,7 +257,7 @@ export const shouldPoll = (s: PrStatus | undefined, now: number, windowMs: numbe
 const PR_GLYPH: Record<PrState, string> = { open: '🟢', draft: '📝', merged: '🟣', closed: '⚫' }
 const CI_GLYPH: Record<CI, string> = { pass: '✅', fail: '❌', running: '⏳', none: '' }
 const CONFLICT_GLYPH = '💥'
-const LANDED_GLYPH = '🌑'
+const LANDED_GLYPH = '🌒'
 const RV_GLYPH: Record<Review, string> = { approved: '🚀', pending: '👀', changes: '✋', unassigned: '🦯', commented: '💬' }
 
 export type Glyphs = { pr: string; ci: string; rv: string; isPending: boolean }

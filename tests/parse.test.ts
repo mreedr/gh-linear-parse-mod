@@ -266,8 +266,8 @@ test('statusGlyphs', () => {
     isPending: false,
   })
   expect(statusGlyphs({ state: 'closed', ci: 'none', checkedAt: 0 })).toEqual({ pr: '⚫', ci: '', rv: '', isPending: false })
-  expect(statusGlyphs({ state: 'merged', ci: 'pass', review: 'approved', checkedAt: 0 }).rv).toBe('🌑')
-  expect(statusGlyphs({ state: 'merged', ci: 'pass', review: 'pending', checkedAt: 0 }).rv).toBe('🌑')
+  expect(statusGlyphs({ state: 'merged', ci: 'pass', review: 'approved', checkedAt: 0 }).rv).toBe('🌒')
+  expect(statusGlyphs({ state: 'merged', ci: 'pass', review: 'pending', checkedAt: 0 }).rv).toBe('🌒')
   expect(statusGlyphs({ state: 'open', ci: 'pass', review: 'unassigned', checkedAt: 0 }).rv).toBe('🦯')
 })
 

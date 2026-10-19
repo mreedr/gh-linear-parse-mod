@@ -77,7 +77,7 @@ Linear rows carry one, labelled `St` in the Linear header row.
 | --- | --- |
 | PR | 🟢 open · 📝 draft · 🟣 merged · ⚫ closed |
 | CI | ✅ pass · ❌ fail · ⏳ running · 💥 merge conflict with the base branch (shown instead of the CI state) · blank when there are no checks; only the newest run of each check counts, so a run cancelled by a rerun or a newer push is ignored |
-| Rv | 🚀 approved · 👀 review needed · ✋ changes requested · 💬 a person other than the author commented, no approval yet (bots such as `claude` don't count) · 🦯 no reviewer assigned (open PRs; a draft is not asking for review yet, so it shows nothing) · 🌑 merged, the review is over |
+| Rv | 🚀 approved · 👀 review needed · ✋ changes requested · 💬 a person other than the author commented, no approval yet (bots such as `claude` don't count) · 🦯 no reviewer assigned (open PRs; a draft is not asking for review yet, so it shows nothing) · 🌒 merged, the review is over |
 
 A dim `…` means not checked yet, and a dim `?` means `gh` could not read the PR.
 Merged and closed PRs are dimmed.
