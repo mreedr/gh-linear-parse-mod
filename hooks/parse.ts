@@ -268,8 +268,9 @@ export function statusGlyphs(s: PrStatus | undefined): Glyphs {
   if (!s) return { pr: '…', ci: '', rv: '', isPending: true }
   if (s.state === 'unknown') return { pr: '?', ci: '', rv: '', isPending: true }
 
-  // A draft is not asking for review yet, so no reviewer is not news.
-  const rv = !s.review || (s.state === 'draft' && s.review === 'unassigned') ? '' : RV_GLYPH[s.review]
+  // A draft is not asking for review yet, so no reviewer is not news; a merged PR's review is over.
+  const isMoot = s.state === 'merged' || (s.state === 'draft' && s.review === 'unassigned')
+  const rv = !s.review || isMoot ? '' : RV_GLYPH[s.review]
 
   // A conflict blocks the merge whatever CI says, so it takes the CI cell.
   const ci = s.hasConflict ? CONFLICT_GLYPH : CI_GLYPH[s.ci]

@@ -34,7 +34,10 @@ test('PR rows get status emoji under PR/CI/Rv labels; Linear rows stay blank', a
             reviewDecision: 'APPROVED',
             statusCheckRollup: [{ __typename: 'CheckRun', status: 'IN_PROGRESS', conclusion: '' }],
           })
-        : pr('MERGED', { statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }] })
+        : pr('MERGED', {
+            reviewDecision: 'APPROVED',
+            statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+          })
     return ran(stdout)
   })
 
