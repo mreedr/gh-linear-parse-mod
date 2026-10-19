@@ -257,6 +257,7 @@ export const shouldPoll = (s: PrStatus | undefined, now: number, windowMs: numbe
 const PR_GLYPH: Record<PrState, string> = { open: '🟢', draft: '📝', merged: '🟣', closed: '⚫' }
 const CI_GLYPH: Record<CI, string> = { pass: '✅', fail: '❌', running: '⏳', none: '' }
 const CONFLICT_GLYPH = '💥'
+const LANDED_GLYPH = '🌑'
 const RV_GLYPH: Record<Review, string> = { approved: '🚀', pending: '👀', changes: '✋', unassigned: '🦯', commented: '💬' }
 
 export type Glyphs = { pr: string; ci: string; rv: string; isPending: boolean }
@@ -268,9 +269,9 @@ export function statusGlyphs(s: PrStatus | undefined): Glyphs {
   if (!s) return { pr: '…', ci: '', rv: '', isPending: true }
   if (s.state === 'unknown') return { pr: '?', ci: '', rv: '', isPending: true }
 
-  // A draft is not asking for review yet, so no reviewer is not news; a merged PR's review is over.
-  const isMoot = s.state === 'merged' || (s.state === 'draft' && s.review === 'unassigned')
-  const rv = !s.review || isMoot ? '' : RV_GLYPH[s.review]
+  // A draft is not asking for review yet, so no reviewer is not news.
+  const isMoot = s.state === 'draft' && s.review === 'unassigned'
+  const rv = s.state === 'merged' ? LANDED_GLYPH : !s.review || isMoot ? '' : RV_GLYPH[s.review]
 
   // A conflict blocks the merge whatever CI says, so it takes the CI cell.
   const ci = s.hasConflict ? CONFLICT_GLYPH : CI_GLYPH[s.ci]

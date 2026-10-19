@@ -59,8 +59,8 @@ test('PR rows get status emoji under PR/CI/Rv labels; Linear rows stay blank', a
   // The status cells are two wide, so each row lines up under PR, CI and Rv.
   const texts = (await rows(ui)).map(b => b.text)
   // The Linear group is its own table, without the PR columns.
-  expect(texts).toEqual(['🟢 ⏳ 🚀 b | #1', '🟣 ✅    b | #2', 'ENG-1 | x'])
-  const merged = (await rows(ui)).find(b => b.text === '🟣 ✅    b | #2')
+  expect(texts).toEqual(['🟢 ⏳ 🚀 b | #1', '🟣 ✅ 🌑 b | #2', 'ENG-1 | x'])
+  const merged = (await rows(ui)).find(b => b.text === '🟣 ✅ 🌑 b | #2')
   expect(JSON.stringify(merged)).toContain('"dimColor":true')
 })
 
