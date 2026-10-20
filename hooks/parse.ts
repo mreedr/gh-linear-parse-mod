@@ -215,12 +215,13 @@ export function parsePrJson(stdout: string): Fetched | undefined {
   const isUnassigned = isLive && (pr.reviewRequests?.length ?? 0) === 0 && others.length === 0
   // A person other than the author left a comment review, and nobody has approved.
   const isCommented = isLive && others.some(r => r.state === 'COMMENTED') && !others.some(r => r.state === 'APPROVED')
+  // GitHub leaves reviewDecision empty when the base branch requires no review, as on a stacked PR.
   const review: Review | undefined =
     pr.reviewDecision === 'APPROVED' ? 'approved'
       : pr.reviewDecision === 'CHANGES_REQUESTED' ? 'changes'
         : isCommented ? 'commented'
           : isUnassigned ? 'unassigned'
-            : pr.reviewDecision === 'REVIEW_REQUIRED' ? 'pending'
+            : pr.reviewDecision === 'REVIEW_REQUIRED' || (isLive && (pr.reviewRequests?.length ?? 0) > 0) ? 'pending'
               : undefined
 
   const title = typeof pr.title === 'string' ? pr.title : undefined

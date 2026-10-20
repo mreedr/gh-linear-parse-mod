@@ -204,9 +204,10 @@ describe('parsePrJson', () => {
     expect(parsePrJson(JSON.stringify({ state: 'OPEN', isDraft: true, reviewDecision: 'REVIEW_REQUIRED', ...none }))?.review).toBe(
       'unassigned',
     )
+    // a stacked PR's base requires no review, so GitHub gives no decision; the request still counts
     expect(
       parsePrJson(JSON.stringify({ state: 'OPEN', isDraft: false, reviewDecision: '', reviewRequests: [{ login: 'a' }], latestReviews: [] })),
-    ).toEqual({ state: 'open', ci: 'none' })
+    ).toEqual({ state: 'open', ci: 'none', review: 'pending' })
     // the author's own comment, and a bot's, are not a review
     const own = [{ author: { login: 'me' }, state: 'COMMENTED' }, { author: { login: 'claude' }, state: 'COMMENTED' }]
     expect(
