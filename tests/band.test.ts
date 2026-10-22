@@ -785,3 +785,18 @@ test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts th
   await clock.advance(1)
   expect(toasts.at(-1)).toBe('gcloud sign-in failed: ERROR: (gcloud.auth.login) There was a problem.')
 })
+
+test('the header puts app buttons after the title, apart from the band buttons on the right', async ($, on) => {
+  const clock = world(on)
+  on('process.run', async () => ran(pr('MERGED')))
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+
+  const header = (await ui.findAll({ type: 'Button' })).filter(b => !b.key?.startsWith('open:') && !b.key?.startsWith('dismiss:'))
+  expect(header.map(b => b.text)).toEqual(['🔑 gcloud', 'Refresh', '🧹', 'Hide'])
+  // the title and time, then the app buttons, then the band's own buttons pushed right
+  const drawn = (await ui.drawn()) as unknown as { children: { children: { props?: { key?: string } }[] }[] }
+  const keys = drawn.children[0]?.children.map(c => c.props?.key).filter(Boolean)
+  expect(keys).toEqual(['pad', 'updated', 'app-gap', 'gcloud-login', 'spacer', 'refresh', 'sweep', 'hide'])
+})

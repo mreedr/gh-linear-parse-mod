@@ -358,6 +358,9 @@ function frame(style: BandColor | null): Partial<BoxProps> {
   return { borderStyle: 'round', borderColor: style.color, paddingX: 1 }
 }
 
+// App buttons (gcloud) sit apart from the title, left of the band's own buttons.
+const APP_GAP = 1
+
 async function gcloudLogin($: $) {
   if (await read($, isSigningIn)) return
   await update($, isSigningIn, () => true)
@@ -829,11 +832,11 @@ export const register: Register = (on, options) => {
     const title = `Session links (${list.length})`
     const expandLabel = expanded ? 'Show less' : `Show ${more} more`
     // The time goes first when the header would not fit on one line.
-    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', signInLabel, awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
+    const actions = [signInLabel, canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
     const headerLead = 2
     const headerNeeds = (withTime: boolean) =>
       headerLead + textWidth(title) + (withTime && updatedAt !== undefined ? 3 + textWidth(`updated ${clockTime(updatedAt)}`) : 0) +
-      actions.filter(Boolean).reduce((n, a) => n + 1 + textWidth(a), 1)
+      actions.filter(Boolean).reduce((n, a) => n + 1 + textWidth(a), 1) + APP_GAP + 1
     const showsUpdated = updatedAt !== undefined && headerNeeds(true) <= room + 2
     if (list.length === 0) {
       return (
@@ -853,6 +856,8 @@ export const register: Register = (on, options) => {
               <Text dimColor>· updated {clockTime(updatedAt)}</Text>
             </Box>
           )}
+          <Box key="app-gap" width={APP_GAP} />
+          <Button key="gcloud-login" label={signInLabel} plain dimColor onPress={() => void gcloudLogin($)} />
           <Box key="spacer" flexGrow={1} />
           {canRefresh && (
             <Button
@@ -863,7 +868,6 @@ export const register: Register = (on, options) => {
               onPress={() => void refreshAll($)}
             />
           )}
-          <Button key="gcloud-login" label={signInLabel} plain dimColor onPress={() => void gcloudLogin($)} />
           {awaiting > 0 && (
             <Button
               key="awaiting-review"
