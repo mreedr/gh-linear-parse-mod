@@ -9,7 +9,8 @@ Each PR is followed by its author's first two letters (`mr` for mreedr), its lin
 The line counts are never cut; on a band too narrow for them the row shows the title alone.
 Each Linear issue is followed by its workflow status (`In progress`, `In review`), read through the session's Linear MCP server.
 The whole row past its `x` opens the link.
-A `/clear` empties the band, the PR and issue statuses and the dismissed list; the color and watch settings stay.
+A `/clear` keeps the band, with its statuses, dismissals and grouping, so the next task can still read its links through `links_band`; only Claude's status line goes.
+Use `/gh-linear-parse-mod clear` to empty it.
 Each session's links and dismissals are saved (the 30 most recent sessions), so a resumed session gets its band back even after compaction took the links out of the conversation.
 The header shows how many links the session has and when the PRs and issues were last read, with its buttons at the right edge: Refresh reads them all again.
 On a narrow band the time is left out so the header stays on one line.

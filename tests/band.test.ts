@@ -386,9 +386,17 @@ describe('5-minute watch', () => {
 })
 
 
-test('a /clear empties the band, its statuses and dismissals, and keeps the color', async ($, on) => {
-  const clock = world(on)
+test('a /clear keeps the band for the next task, saved under the new session id', async ($, on) => {
+  on('prompt.submit', async (_$, e) => ({ text: e.text }))
+  const clock = mock.clock(on)
+  const store = new Map<string, unknown>()
+  on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
+  on('store.set', async (_$, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', async (_$, e) => (store.delete(e.key), { value: undefined }))
+  on('store.keys', async () => ({ value: [...store.keys()] }))
   on('session.end', async (_$, e) => ({ sessionId: e.sessionId }))
+  let id = 's1'
+  on('session.id', async () => ({ value: id }))
   on('process.run', async () => ran(pr('OPEN')))
   const command = (args: string) => ({
     command: 'gh-linear-parse-mod',
@@ -396,25 +404,30 @@ test('a /clear empties the band, its statuses and dismissals, and keeps the colo
     origin: { kind: 'composer' as const },
     presentation: { isFullscreen: true, columns: 120 },
   })
-  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://linear.app/acme/issue/ENG-1/x'))
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2 https://linear.app/acme/issue/ENG-1/x'))
   await clock.advance(10)
   await $.command.run(command('color red'))
+  await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__group_prs', groups: [{ label: 'first', prs: ['b#1'] }] } as never)
+  await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__set_status', text: 'waiting on CI' })
   const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
-  await ui.press({ key: 'dismiss:github:a/b#1' })
+  await ui.press({ key: 'dismiss:github:a/b#2' })
   const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
-  expect((await band()).dismissed).toEqual(['github:a/b#1'])
-  expect((await band()).links).toHaveLength(1)
+  const before = await band()
 
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  id = 's2'
+  await clock.advance(1)
 
-  const state = await band()
-  expect(state.links).toEqual([])
-  expect(state.dismissed).toEqual([])
-  expect(state.lastCheckedAt).toBe(null)
-  expect(state.color).toEqual({ color: 'red', isFill: false })
-
-  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
-  expect((await band()).links.map((l: { url: string }) => l.url)).toEqual(['https://github.com/a/b/pull/1'])
+  const after = await band()
+  expect(after.links).toEqual(before.links)
+  expect(after.links).toHaveLength(2)
+  expect(after.dismissed).toEqual(['github:a/b#2'])
+  expect(after.groups).toEqual([{ label: 'first', prs: ['https://github.com/a/b/pull/1'] }])
+  expect(after.lastCheckedAt).not.toBe(null)
+  expect(after.color).toEqual({ color: 'red', isFill: false })
+  // the old task's status is not the new one's
+  expect(after.agentStatus).toBeNull()
+  expect(store.get('links:s2')).toMatchObject({ dismissed: ['github:a/b#2'] })
 })
 
 test('set_status puts a status line atop the band; x, an empty text and /clear take it down', async ($, on) => {
@@ -506,8 +519,8 @@ test('a resumed session gets its links and dismissals back from the store', asyn
   await ui.press({ key: 'dismiss:github:a/b#2' })
   await ui.unmount()
 
-  // The band empties as a restart's would; the store still holds this session's links.
-  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  // Resuming another session empties the band; the store still holds this session's links.
+  await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's1' } })
   const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
   expect((await band()).links).toEqual([])
   calls.length = 0
@@ -718,7 +731,7 @@ test('a resumed session gets its PR groups back', async ($, on) => {
   await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__group_prs', groups: [{ label: 'first', text: 'then the rest', prs: ['b#2'] }] } as never)
   await clock.advance(10)
 
-  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's1' } })
   expect((await band()).groups).toBe(null)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(10)

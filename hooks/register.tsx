@@ -456,10 +456,15 @@ export const register: Register = (on, options) => {
     return started
   })
 
-  // A /clear ends the session with no session.start after it: the new conversation
-  // starts with an empty band, keeping only the color and watch settings.
+  // A /clear goes on under a new session id with no session.start: the band carries over
+  // so the new task can still reach its links, and only the old task's status goes.
+  // A /resume swaps in another session, whose session.start restores its own band.
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
+      await update($, agentStatus, () => null)
+      $.clock.after(1, () => void persist($))
+    }
+    if (e.reason === 'resume') {
       await update($, items, () => [])
       await update($, prStatuses, () => ({}))
       await update($, issueStatuses, () => ({}))
