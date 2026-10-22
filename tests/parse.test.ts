@@ -327,7 +327,7 @@ describe('shortTitle', () => {
     ["feat(api): find a user's profile, or create it once", { tag: 'api', text: "find a user's profile" }],
     ["fix(auth) Never reuse a member's session token for a different account (ENG-1234)", { tag: 'auth', text: "Never reuse a member's session token for a different account" }],
     ["perf(search): store a query's results so GET /search skips the index", { tag: 'search', text: "store a query's results" }],
-    ['feat(api_keys): register a key from its hash, and seeds to issue and revoke one (ENG-1235)', { tag: 'api_keys', text: 'register a key from its hash' }],
+    ['feat(rate_limits): cap each client by its plan, and seeds to raise and lower one (ENG-1235)', { tag: 'rate_limits', text: 'cap each client by its plan' }],
     ['feat(config): storage modes: production, sandbox or mock per backend (S3, GCS, Azure)', { tag: 'config', text: 'storage modes: production, sandbox or mock per backend (S3, GCS, Azure)' }],
     ['fix: remove legacyFlag', { text: 'remove legacyFlag' }],
     ['[Sprint 13/13] client: account status (DES-344)', { tag: 'client', text: 'account status' }],
