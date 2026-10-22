@@ -120,13 +120,16 @@ By default the mod adds a short section to the system prompt asking the agent to
 
 Claude groups the GitHub section only when asked: run `/gh-linear-parse-mod group`, or ask in your own words.
 It sets the layout with the `mcp__gh-linear-parse-mod__group_prs` tool, a list of groups from top to bottom, each with an optional label, an optional line of text and optional PRs.
-A group with no PRs is informational, such as a step between rounds.
+A group with no PRs is informational.
+A step is a to-do row of its own for work that is not a PR, such as applying a migration, drawn as `☐` and ticked to `☑` once done.
+PRs can be links, `owner/repo#N`, or `repo#N`; a `repo#N` for a PR not in the band yet takes its owner from that repo's PRs in the band.
 
 ```
 PR CI Rv GitHub
 ── round 1 ──
 🟢 ✅ 🚀 api | #42 add the export endpoint
 🟢 ⏳ 🦯 web | #43 export button
+☐ apply the migration
 ── round 2 ──
    run the smoke checks on staging after round 1
 ── other ──
@@ -139,10 +142,12 @@ PRs in no group show under `other`, newest first, and mentioning a grouped PR do
 Grouped PRs always show; `Show N more` collapses only the rest.
 `x` on a PR takes it out of its group.
 Labels and text lines have no `x`; ask Claude to change the grouping, or `group clear` to drop it.
+Press a step to tick it, and again to untick it; Claude sees it through `links_band`.
+For small changes Claude uses the `mcp__gh-linear-parse-mod__edit_groups` tool instead of sending the whole layout again: `put` a PR into a group, `remove` it, `set` a group's label or text or tick a step, `insert` a group or step, or `delete` one.
 Merged and closed PRs leave their groups on their own and fold into one `landed (N)` row at the bottom; press it to show or fold them.
 A group whose PRs have all landed shows a ✓ after its label, and 🧹 dismisses the landed PRs along with the groups they finished.
 The grouping is saved with the session's links, `links_band` reports it, and `group clear` or `clear` drops it.
-`links_band` also reports `sinceGrouping`: the grouped PRs that landed and the open PRs that joined the band since the grouping was set.
+`links_band` also reports `sinceGrouping`: the grouped PRs that landed and the open PRs that joined the band since the grouping was last set or edited.
 While PRs are grouped, Claude's system prompt asks it to check that after it opens, merges or closes a PR, and to keep the grouping current.
 
 ## Develop

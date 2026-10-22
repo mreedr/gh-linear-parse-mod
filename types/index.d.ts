@@ -35,11 +35,27 @@ export type StatusNote = {
   setAt: number
 }
 
-// A group in the GitHub section, set through the group_prs tool: a label, a line of text, PRs (keys), or any mix.
+// A group in the GitHub section, set through the group_prs tool: a label, a line of text, PRs (keys), or any mix;
+// or a step, a to-do row of its own that is ticked when done.
 export type PrGroup = {
   label?: string
   text?: string
   prs: string[]
+  step?: string
+  isDone?: boolean
+}
+
+// One change edit_groups makes to the groups.
+export type GroupEdit = {
+  op?: string
+  pr?: string
+  group?: number
+  at?: number
+  label?: string
+  text?: string
+  prs?: string[]
+  step?: string
+  done?: boolean
 }
 
 // The PRs in the band when the groups were last set, and which were still open, so
@@ -61,7 +77,9 @@ declare module 'claude-code' {
     /** Sets or clears the status line at the top of the band. */
     'mcp__gh-linear-parse-mod__set_status': { text?: string }
     /** Sets the GitHub section's groups, top to bottom; an empty list clears them. */
-    'mcp__gh-linear-parse-mod__group_prs': { groups?: { label?: string; text?: string; prs?: string[] }[] }
+    'mcp__gh-linear-parse-mod__group_prs': { groups?: { label?: string; text?: string; prs?: string[]; step?: string; done?: boolean }[] }
+    /** Changes the groups in place, one edit at a time. */
+    'mcp__gh-linear-parse-mod__edit_groups': { edits?: GroupEdit[] }
   }
 
   interface PluginState {

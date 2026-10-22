@@ -680,7 +680,7 @@ test('group_prs lays out the GitHub section; group asks Claude and group clear d
       { text: 'a note', prs: ['a/d#4', 'nope'] },
     ]),
   ).toBe(
-    'Grouped the GitHub section: round 1 (2 PRs), round 2 (0 PRs), text (1 PR). Skipped (not a PR link, owner/repo#N, or a repo#N in the band): nope.',
+    'Grouped the GitHub section: round 1 (2 PRs), round 2 (0 PRs), text (1 PR). Skipped (not a PR link, owner/repo#N, or a repo#N for a repo in the band): nope.',
   )
   await clock.advance(10)
   expect(await lines()).toEqual([
@@ -886,4 +886,54 @@ test('with groups up, landed PRs leave their groups for a folded landed row and 
   // 🧹 drops the landed PRs and the group they finished
   await (await mount()).press({ key: 'sweep' })
   expect(await lines()).toEqual(['── round 2 ──', 'after round 1', '🟢    🦯 b | #3', '── other ──', '🟢    🦯 b | #4'])
+})
+
+test('edit_groups changes the grouping in place, and pressing a step ticks it', async ($, on) => {
+  const clock = world(on)
+  on('process.run', async () => ran(pr('OPEN')))
+  const tool = async (name: string, input: Record<string, unknown>) =>
+    String((await $.tool.call({ tool: `mcp__gh-linear-parse-mod__${name}`, ...input } as never)).result)
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+  const lines = async () =>
+    (await ui.findAll({ type: 'Box' }))
+      .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
+      .map(b => b.text.replace(/^x/, '').trim())
+
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2'))
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  await tool('group_prs', { groups: [{ label: 'round 1', prs: ['b#1', 'b#2'] }, { step: 'apply the migration' }, { label: 'round 2' }] })
+
+  expect(
+    await tool('edit_groups', {
+      edits: [
+        { op: 'put', pr: 'b#2', group: 2 },
+        { op: 'put', pr: 'b#3', group: 2, at: 0 },
+        { op: 'set', group: 0, text: 'merge any time' },
+        { op: 'insert', at: 1, step: 'deploy' },
+      ],
+    }),
+  ).toBe('Groups now: round 1 (1 PR), step "deploy", step "apply the migration", round 2 (2 PRs).')
+  await clock.advance(10)
+  expect(await lines()).toEqual([
+    '── round 1 ──',
+    'merge any time',
+    '🟢    🦯 b | #1',
+    '☐ deploy',
+    '☐ apply the migration',
+    '── round 2 ──',
+    '🟢    🦯 b | #3',
+    '🟢    🦯 b | #2',
+  ])
+
+  // the person ticks a step in the band, and Claude sees it
+  await ui.press({ key: 'step:1' })
+  expect((await lines())[3]).toBe('☑ deploy')
+  expect((await band()).groups[1]).toEqual({ step: 'deploy', isDone: true, prs: [] })
+  await ui.press({ key: 'step:1' })
+  expect((await lines())[3]).toBe('☐ deploy')
+
+  expect(await tool('edit_groups', { edits: [{ op: 'set', group: 2, done: true }, { op: 'delete', group: 9 }] })).toBe(
+    'Groups now: round 1 (1 PR), step "deploy", step "apply the migration" (done), round 2 (2 PRs). Edit 2: no group 9 (groups run from 0 to 3).',
+  )
 })

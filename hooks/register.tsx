@@ -11,6 +11,7 @@ import {
   cell,
   clockTime,
   diffParts,
+  editGroups,
   extractLinks,
   fitText,
   githubRows,
@@ -70,6 +71,7 @@ const TEXT_COLOR = '#8b95b8'
 const STATE_TOOL = 'mcp__gh-linear-parse-mod__links_band'
 const STATUS_TOOL = 'mcp__gh-linear-parse-mod__set_status'
 const GROUP_TOOL = 'mcp__gh-linear-parse-mod__group_prs'
+const EDIT_TOOL = 'mcp__gh-linear-parse-mod__edit_groups'
 const MAX_STATUS = 120
 const RECHECK_MS = 15_000
 // gcloud opens its sign-in page through Python's webbrowser, which takes BROWSER as a plain program path.
@@ -111,7 +113,7 @@ const NUDGE = {
 const GROUP_NUDGE = {
   id: 'gh-linear-parse-mod:group-nudge',
   scope: 'session',
-  text: `The person has grouped the PRs in the links band above the prompt. After you open, merge or close a PR, read ${STATE_TOOL}: when its sinceGrouping lists open PRs in no group, or the plan's steps have moved on, update the grouping with ${GROUP_TOOL}. Merged and closed PRs leave their groups on their own.`,
+  text: `The person has grouped the PRs in the links band above the prompt. After you open, merge or close a PR, read ${STATE_TOOL}: when its sinceGrouping lists open PRs in no group, or the plan's steps have moved on, change the grouping with ${EDIT_TOOL}, or lay it out again with ${GROUP_TOOL} when most of it moves. Tick a step with ${EDIT_TOOL} once it is done. Merged and closed PRs leave their groups on their own.`,
 } as const
 
 // Whether each request's system prompt asks the agent to keep its status; on unless turned off.
@@ -363,11 +365,35 @@ async function setGroups($: $, groups: PrGroup[] | null) {
   await persist($)
 }
 
+// A grouping as the tool results name it: each group by its label, text or step, with its PR count.
+const groupsSummary = (groups: readonly PrGroup[]) =>
+  groups
+    .map(g => (g.step ? `step "${g.step}"${g.isDone ? ' (done)' : ''}` : `${g.label ?? (g.text ? 'text' : 'unlabeled')} (${g.prs.length} PR${g.prs.length === 1 ? '' : 's'})`))
+    .join(', ')
+
+// PRs a grouping names that the band does not hold yet join it, even ones dismissed before.
+async function takeLinks($: $, links: readonly Item[]) {
+  const keys = links.map(l => l.key)
+  await update($, dismissed, gone => gone.filter(k => !keys.includes(k)))
+  const have = new Set((await read($, items)).map(i => i.key))
+  const fresh = links.filter(l => !have.has(l.key))
+  if (fresh.length > 0) await update($, items, list => mergeLinks(list, fresh, MAX_STORED))
+  return fresh.map(l => l.key)
+}
+
+// Ticks a step, or unticks it, when it still holds that text.
+async function toggleStep($: $, group: number, step: string) {
+  await update($, prGroups, groups =>
+    groups && groups.map((g, n) => (n === group && g.step === step ? (g.isDone ? { step: g.step, prs: g.prs } : { ...g, isDone: true }) : g)),
+  )
+  await persist($)
+}
+
 const groupPrompt = (how: string) =>
   `Group the PRs in the links band above the prompt with ${GROUP_TOOL}` +
   (how
     ? `: ${how}.`
-    : '. Pick labels that fit the work, such as the order to merge or roll them out in, and add text-only groups for steps in between where they help.') +
+    : '. Pick labels that fit the work, such as the order to merge or roll them out in, and add steps for the work in between that is not a PR.') +
   ` Read ${STATE_TOOL} first for the PRs and their state.`
 
 // Cells the frame takes across: a border and its padding, or a fill's padding.
@@ -428,7 +454,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'links_band',
       description:
-        "Returns this session's gh-linear-parse-mod links band: the GitHub PR and Linear links newest first (the band shows PRs above Linear links) with each PR's title, author, lines added and deleted, state, CI and review status, whether it has a merge conflict, and each Linear issue's status, as last checked, the links dismissed this session, whether the band is hidden or expanded, its color, and, while PRs are grouped, sinceGrouping: the grouped PRs that merged or closed and the open PRs that joined the band since group_prs last set the groups. Read-only.",
+        "Returns this session's gh-linear-parse-mod links band: the GitHub PR and Linear links newest first (the band shows PRs above Linear links) with each PR's title, author, lines added and deleted, state, CI and review status, whether it has a merge conflict, and each Linear issue's status, as last checked, the links dismissed this session, whether the band is hidden or expanded, its color, and, while PRs are grouped, the groups top to bottom (each a label, text and PRs, or a step and whether it is done) and sinceGrouping: the grouped PRs that merged or closed and the open PRs that joined the band since group_prs or edit_groups last changed the groups. Read-only.",
       inputSchema: { type: 'object', properties: {} },
       isDeferred: false,
     })
@@ -445,7 +471,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'group_prs',
       description:
-        "Sets how the GitHub section of the gh-linear-parse-mod links band is grouped: a list of groups, top to bottom, each with an optional label (a divider such as \"round 1\" or \"blocked\"), an optional line of text, and optional PRs (PR links, owner/repo#N, or repo#N for a PR already in the band). A group with only a label or text is informational, such as a step between rounds. Sends the whole layout each time and replaces the last one; an empty list clears it. PRs not in any group show under \"other\". Use it only when the person asks you to group or order PRs (for example through /gh-linear-parse-mod group), or to keep a grouping they asked for current. Merged and closed PRs leave their groups on their own and fold into a landed row at the bottom, and a group whose PRs have all landed shows a ✓, so never make a group for merged or closed PRs.",
+        "Sets how the GitHub section of the gh-linear-parse-mod links band is grouped: a list of groups, top to bottom, each with an optional label (a divider such as \"round 1\" or \"blocked\"), an optional line of text, and optional PRs (PR links, owner/repo#N, or repo#N for a repo already in the band), or else a step: a to-do row of its own for work that is not a PR, such as \"apply the migration\", which shows a box ticked once done. Sends the whole layout each time and replaces the last one; an empty list clears it. For a small change, such as moving one PR, editing one group's text or ticking a step, use edit_groups instead. PRs not in any group show under \"other\". Use it only when the person asks you to group or order PRs (for example through /gh-linear-parse-mod group), or to keep a grouping they asked for current. Merged and closed PRs leave their groups on their own and fold into a landed row at the bottom, and a group whose PRs have all landed shows a ✓, so never make a group for merged or closed PRs.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -458,11 +484,44 @@ export const register: Register = (on, options) => {
                 label: { type: 'string', description: 'The divider text, under 60 characters.' },
                 text: { type: 'string', description: 'A line of text under the label, under 200 characters.' },
                 prs: { type: 'array', items: { type: 'string' }, description: 'The PRs in this group, in order.' },
+                step: { type: 'string', description: 'Makes this group a step, a to-do row of its own, under 120 characters; it takes no label, text or PRs.' },
+                done: { type: 'boolean', description: 'For a step: whether it is done.' },
               },
             },
           },
         },
         required: ['groups'],
+      },
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: 'edit_groups',
+      description:
+        "Changes the gh-linear-parse-mod links band's PR groups in place, one edit after another, without resending the layout. A group is its 0-based place in links_band's groups, and each edit sees the groups as the edits before it left them. Ops: put (pr into group, at a place in it or last, taken out of any other group), remove (pr out of its group, back under \"other\"), set (a group's label or text, an empty string clears one; a step's step text, or done to tick it), insert (a new group at a place or last, with a label, text and PRs, or a step), delete (a group; its PRs go back under \"other\"). A group left with nothing in it goes. PRs are PR links, owner/repo#N, or repo#N for a repo already in the band.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          edits: {
+            type: 'array',
+            description: 'The edits, applied in order.',
+            items: {
+              type: 'object',
+              properties: {
+                op: { type: 'string', enum: ['put', 'remove', 'set', 'insert', 'delete'] },
+                pr: { type: 'string', description: 'For put and remove: the PR.' },
+                group: { type: 'number', description: 'For put, set and delete: the group, 0-based.' },
+                at: { type: 'number', description: 'For put: the place in the group; for insert: the place among the groups. Last when left out.' },
+                label: { type: 'string', description: 'For set and insert: the divider text.' },
+                text: { type: 'string', description: 'For set and insert: the line of text under the label.' },
+                prs: { type: 'array', items: { type: 'string' }, description: 'For insert: the PRs in the new group.' },
+                step: { type: 'string', description: "For set and insert: a step's text." },
+                done: { type: 'boolean', description: 'For set and insert: whether the step is done.' },
+              },
+              required: ['op'],
+            },
+          },
+        },
+        required: ['edits'],
       },
       isDeferred: false,
     })
@@ -565,21 +624,27 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: GROUP_TOOL }, async ($, e) => {
     const { groups, links, skipped, repeated } = parseGroups(e.groups, await read($, items))
-    const keys = links.map(l => l.key)
-    await update($, dismissed, gone => gone.filter(k => !keys.includes(k)))
-    const have = new Set((await read($, items)).map(i => i.key))
-    const fresh = links.filter(l => !have.has(l.key))
-    if (fresh.length > 0) await update($, items, list => mergeLinks(list, fresh, MAX_STORED))
+    const fresh = await takeLinks($, links)
     await setGroups($, groups)
-    refreshSoon($, fresh.map(l => l.key), true)
+    refreshSoon($, fresh, true)
     const notes = [
-      skipped.length > 0 && `Skipped (not a PR link, owner/repo#N, or a repo#N in the band): ${skipped.join(', ')}.`,
+      skipped.length > 0 && `Skipped (not a PR link, owner/repo#N, or a repo#N for a repo in the band): ${skipped.join(', ')}.`,
       repeated.length > 0 && `Already in an earlier group, so left there: ${repeated.join(', ')}.`,
     ].filter(Boolean)
     const summary =
       groups.length === 0
         ? 'Grouping cleared; the GitHub section is newest first again.'
-        : `Grouped the GitHub section: ${groups.map(g => `${g.label ?? (g.text ? 'text' : 'unlabeled')} (${g.prs.length} PR${g.prs.length === 1 ? '' : 's'})`).join(', ')}.`
+        : `Grouped the GitHub section: ${groupsSummary(groups)}.`
+
+    return { result: [summary, ...notes].join(' ') }
+  })
+
+  on('tool.call', { tool: EDIT_TOOL }, async ($, e) => {
+    const { groups, links, notes } = editGroups((await read($, prGroups)) ?? [], e.edits, await read($, items))
+    const fresh = await takeLinks($, links)
+    await setGroups($, groups)
+    refreshSoon($, fresh, true)
+    const summary = groups.length === 0 ? 'No groups left; the GitHub section is newest first again.' : `Groups now: ${groupsSummary(groups)}.`
 
     return { result: [summary, ...notes].join(' ') }
   })
@@ -873,6 +938,21 @@ export const register: Register = (on, options) => {
               plain
               dimColor
               onPress={() => update($, showsLanded, v => !v)}
+            />
+          </Box>
+        )
+      }
+      // A step is a to-do row; pressing it ticks or unticks it.
+      if (r.kind === 'step') {
+        return (
+          <Box key={`group-step:${r.group}`} flexDirection="row" gap={1}>
+            <Box key="pad" width={1} />
+            <Button
+              key={`step:${r.group}`}
+              label={fitText(`${r.isDone ? '☑' : '☐'} ${r.text}`, room)}
+              plain
+              dimColor={r.isDone}
+              onPress={() => toggleStep($, r.group, r.text)}
             />
           </Box>
         )

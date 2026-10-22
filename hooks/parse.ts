@@ -1,4 +1,4 @@
-import type { BandColor, CI, IssueStatus, IssueType, Item, PrGroup, PrState, PrStatus, Review } from '../types'
+import type { BandColor, CI, GroupEdit, IssueStatus, IssueType, Item, PrGroup, PrState, PrStatus, Review } from '../types'
 
 export type Link = Item
 
@@ -432,10 +432,12 @@ export const issueWatchKeys = (keys: readonly string[], known: Readonly<Record<s
 const MAX_GROUPS = 20
 const MAX_LABEL = 60
 const MAX_GROUP_TEXT = 200
+const MAX_STEP = 120
 
 const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '')
 
-// A PR link, `owner/repo#N`, or `repo#N` / `#N` naming exactly one PR already in the band.
+// A PR link, `owner/repo#N`, `#N` naming exactly one PR already in the band, or `repo#N`
+// for a PR in the band or, when the band holds one owner's `repo`, another PR there.
 export function resolvePr(ref: string, band: readonly Item[]): Link | undefined {
   const link = parseLink(ref)
   if (link) return isPrKey(link.key) ? link : undefined
@@ -448,46 +450,133 @@ export function resolvePr(ref: string, band: readonly Item[]): Link | undefined 
     const name = i.key.split('/')[1]
     return isPrKey(i.key) && (repo ? name === `${repo.toLowerCase()}#${n}` : name?.endsWith(`#${n}`))
   })
-  return matches.length === 1 ? matches[0] : undefined
+  if (matches.length === 1) return matches[0]
+  if (!repo || matches.length > 0) return undefined
+  const owners = new Set(
+    band.flatMap(i => {
+      const [, owner, name] = i.url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\//) ?? []
+      return owner && name?.toLowerCase() === repo.toLowerCase() ? [`${owner}/${name}`] : []
+    }),
+  )
+  const [only] = owners
+  return owners.size === 1 ? githubLink([...only!.split('/'), 'pull', n!]) : undefined
 }
 
 export type ParsedGroups = { groups: PrGroup[]; links: Link[]; skipped: string[]; repeated: string[] }
 
+// One group from tool input, its PRs resolved against the band and the PRs taken so far.
+// A step is a row of its own, so it keeps no label, text or PRs.
+function parseGroup(g: unknown, band: readonly Item[], found: Omit<ParsedGroups, 'groups'>): PrGroup | undefined {
+  if (typeof g !== 'object' || g === null) return undefined
+  const { label, text, prs, step, done } = g as { label?: unknown; text?: unknown; prs?: unknown; step?: unknown; done?: unknown }
+  const s = clean(step, MAX_STEP)
+  if (s) return { step: s, ...(done === true && { isDone: true }), prs: [] }
+  const keys: string[] = []
+  for (const ref of Array.isArray(prs) ? prs : []) {
+    const raw = clean(ref, 300)
+    const link = raw ? resolvePr(raw, [...band, ...found.links]) : undefined
+    if (!link) {
+      if (raw) found.skipped.push(raw)
+      continue
+    }
+    if (found.links.some(l => l.key === link.key)) {
+      found.repeated.push(raw)
+      continue
+    }
+    keys.push(link.key)
+    found.links.push(link)
+  }
+  const l = clean(label, MAX_LABEL)
+  const t = clean(text, MAX_GROUP_TEXT)
+  return l || t || keys.length > 0 ? { ...(l && { label: l }), ...(t && { text: t }), prs: keys } : undefined
+}
+
 // The group_prs input as groups of PR keys: unreadable refs are skipped and a PR
 // named twice stays in its first group.
 export function parseGroups(input: unknown, band: readonly Item[]): ParsedGroups {
+  const found = { links: [] as Link[], skipped: [] as string[], repeated: [] as string[] }
+  const groups = (Array.isArray(input) ? input.slice(0, MAX_GROUPS) : []).flatMap(g => parseGroup(g, band, found) ?? [])
+  return { groups, ...found }
+}
+
+const isEmpty = (g: PrGroup) => !g.label && !g.text && !g.step && g.prs.length === 0
+
+export type EditedGroups = { groups: PrGroup[]; links: Link[]; notes: string[] }
+
+// Applies edit_groups' edits in order. Each edit sees the groups the ones before it left,
+// and a group left empty goes once they are all done.
+export function editGroups(start: readonly PrGroup[], edits: unknown, band: readonly Item[]): EditedGroups {
+  let groups = start.map(g => ({ ...g, prs: [...g.prs] }))
   const links: Link[] = []
-  const skipped: string[] = []
-  const repeated: string[] = []
-  const groups: PrGroup[] = []
-  for (const g of Array.isArray(input) ? input.slice(0, MAX_GROUPS) : []) {
-    if (typeof g !== 'object' || g === null) continue
-    const { label, text, prs } = g as { label?: unknown; text?: unknown; prs?: unknown }
-    const keys: string[] = []
-    for (const ref of Array.isArray(prs) ? prs : []) {
-      const raw = clean(ref, 300)
-      const link = raw ? resolvePr(raw, [...band, ...links]) : undefined
-      if (!link) {
-        if (raw) skipped.push(raw)
-        continue
-      }
-      if (links.some(l => l.key === link.key)) {
-        repeated.push(raw)
-        continue
-      }
-      keys.push(link.key)
-      links.push(link)
-    }
-    const l = clean(label, MAX_LABEL)
-    const t = clean(text, MAX_GROUP_TEXT)
-    if (l || t || keys.length > 0) groups.push({ ...(l && { label: l }), ...(t && { text: t }), prs: keys })
+  const notes: string[] = []
+  const known = () => [...band, ...links]
+  const at = (n: unknown, max: number) => (typeof n === 'number' && Number.isInteger(n) ? Math.max(0, Math.min(n, max)) : max)
+  const target = (e: GroupEdit, n: number) => {
+    const g = typeof e.group === 'number' ? groups[e.group] : undefined
+    if (!g) notes.push(`Edit ${n + 1}: no group ${String(e.group)} (groups run from 0 to ${groups.length - 1}).`)
+    return g
   }
-  return { groups, links, skipped, repeated }
+  const take = (key: string) => groups.forEach(g => (g.prs = g.prs.filter(k => k !== key)))
+
+  ;(Array.isArray(edits) ? edits : []).forEach((raw, n) => {
+    const e = (typeof raw === 'object' && raw !== null ? raw : {}) as GroupEdit
+    if (e.op === 'put' || e.op === 'remove') {
+      const ref = clean(e.pr, 300)
+      const link = ref ? resolvePr(ref, known()) : undefined
+      if (!link) return notes.push(`Edit ${n + 1}: "${ref}" is not a PR link, owner/repo#N, or a repo#N for a repo in the band.`)
+      if (e.op === 'remove') return take(link.key)
+      const g = target(e, n)
+      if (!g) return
+      if (g.step) return notes.push(`Edit ${n + 1}: group ${e.group} is a step, which holds no PRs.`)
+      take(link.key)
+      g.prs.splice(at(e.at, g.prs.length), 0, link.key)
+      if (!links.some(l => l.key === link.key)) links.push(link)
+      return
+    }
+    if (e.op === 'set') {
+      const g = target(e, n)
+      if (!g) return
+      if (g.step) {
+        if (e.label !== undefined || e.text !== undefined) notes.push(`Edit ${n + 1}: group ${e.group} is a step; set its step or done.`)
+        const s = clean(e.step, MAX_STEP)
+        if (s) g.step = s
+        if (e.done === true) g.isDone = true
+        if (e.done === false) delete g.isDone
+        return
+      }
+      if (e.step !== undefined || e.done !== undefined) notes.push(`Edit ${n + 1}: group ${e.group} is not a step; set its label or text.`)
+      for (const [field, max] of [['label', MAX_LABEL], ['text', MAX_GROUP_TEXT]] as const) {
+        if (typeof e[field] !== 'string') continue
+        const v = clean(e[field], max)
+        if (v) g[field] = v
+        else delete g[field]
+      }
+      return
+    }
+    if (e.op === 'insert') {
+      if (groups.length >= MAX_GROUPS) return notes.push(`Edit ${n + 1}: there are already ${MAX_GROUPS} groups.`)
+      const found = { links: [] as Link[], skipped: [] as string[], repeated: [] as string[] }
+      const g = parseGroup(e, known(), found)
+      if (found.skipped.length > 0) notes.push(`Edit ${n + 1}: skipped ${found.skipped.join(', ')} (not a PR link, owner/repo#N, or a repo#N for a repo in the band).`)
+      if (!g) return notes.push(`Edit ${n + 1}: an insert needs a label, text, PRs or a step.`)
+      g.prs.forEach(take)
+      groups.splice(at(e.at, groups.length), 0, g)
+      found.links.forEach(l => links.some(k => k.key === l.key) || links.push(l))
+      return
+    }
+    if (e.op === 'delete') {
+      if (target(e, n)) groups.splice(e.group!, 1)
+      return
+    }
+    notes.push(`Edit ${n + 1}: unknown op "${String(e.op)}"; use put, remove, set, insert or delete.`)
+  })
+  groups = groups.filter(g => !isEmpty(g))
+  return { groups, links, notes }
 }
 
 // Drops PRs from the groups, and any group left with nothing in it.
 export const withoutPrs = (groups: readonly PrGroup[], keys: readonly string[]): PrGroup[] =>
-  groups.map(g => ({ ...g, prs: g.prs.filter(k => !keys.includes(k)) })).filter(g => g.label || g.text || g.prs.length > 0)
+  groups.map(g => ({ ...g, prs: g.prs.filter(k => !keys.includes(k)) })).filter(g => !isEmpty(g))
 
 // Drops the groups whose PRs all went, and those PRs from the rest.
 export const withoutDone = (groups: readonly PrGroup[], keys: readonly string[]): PrGroup[] =>
@@ -496,6 +585,7 @@ export const withoutDone = (groups: readonly PrGroup[], keys: readonly string[])
 export type GithubRow =
   | { kind: 'label'; group?: number; text: string; isDone?: boolean }
   | { kind: 'text'; group: number; text: string; isDone?: boolean }
+  | { kind: 'step'; group: number; text: string; isDone: boolean }
   | { kind: 'landed'; count: number; isOpen: boolean }
   | { kind: 'pr'; item: Item }
 
@@ -514,6 +604,7 @@ export type Landed = {
 export function githubRows(groups: readonly PrGroup[], band: readonly Item[], rest: readonly Item[], landed?: Landed): GithubRow[] {
   const byKey = new Map(band.map(i => [i.key, i]))
   const rows: GithubRow[] = groups.flatMap((g, group): GithubRow[] => {
+    if (g.step) return [{ kind: 'step', group, text: g.step, isDone: g.isDone === true }]
     const listed = landed ? g.prs.filter(k => landed.listed.has(k)) : []
     const isDone = listed.length > 0 && listed.every(k => landed!.finished.has(k))
     const prs = g.prs.filter(k => byKey.has(k) && !landed?.finished.has(k))

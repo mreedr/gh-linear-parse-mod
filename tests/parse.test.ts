@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   githubRows,
   parseGroups,
+  editGroups,
   resolvePr,
   withoutDone,
   withoutPrs,
@@ -466,6 +467,26 @@ describe('PR groups', () => {
     expect(resolvePr('cli#42', band)).toBeUndefined()
     expect(resolvePr('https://github.com/acme/api', band)).toBeUndefined()
     expect(resolvePr('https://linear.app/acme/issue/ENG-1/x', band)).toBeUndefined()
+    // a repo the band holds lends its owner to a PR not in the band yet
+    expect(resolvePr('web#44', band)).toEqual({ key: 'github:acme/web#44', url: 'https://github.com/acme/web/pull/44' })
+    expect(resolvePr('#44', band)).toBeUndefined()
+    const twoOwners = [...band, { key: 'github:other/web#1', url: 'https://github.com/other/web/pull/1' }]
+    expect(resolvePr('web#44', twoOwners)).toBeUndefined()
+  })
+
+  test('a step is a to-do row of its own, ticked when done', () => {
+    const parsed = parseGroups([{ step: ' apply  the migration ', label: 'x', prs: ['api#42'] }, { step: 'seed', done: true }], band)
+    expect(parsed.groups).toEqual([
+      { step: 'apply the migration', prs: [] },
+      { step: 'seed', isDone: true, prs: [] },
+    ])
+    expect(parsed.links).toEqual([])
+    expect(githubRows(parsed.groups, band, [])).toEqual([
+      { kind: 'step', group: 0, text: 'apply the migration', isDone: false },
+      { kind: 'step', group: 1, text: 'seed', isDone: true },
+    ])
+    // a sweep keeps steps
+    expect(withoutDone(parsed.groups, [band[0]!.key])).toEqual(parsed.groups)
   })
 
   test('groups keep labels, text and PRs; unreadable and repeated PRs are reported', () => {
@@ -526,5 +547,96 @@ describe('PR groups', () => {
     expect(githubRows(groups, band, [], landed(true)).slice(-2)).toEqual([{ kind: 'pr', item: b }, { kind: 'pr', item: c }])
     // a sweep drops the groups it finished, and keeps notes
     expect(withoutDone(groups, [b!.key, c!.key])).toEqual([{ label: 'round 1', prs: [a!.key] }, { label: 'note', prs: [] }])
+  })
+})
+
+describe('editGroups', () => {
+  const band = [
+    { key: 'github:acme/api#1', url: 'https://github.com/acme/api/pull/1' },
+    { key: 'github:acme/api#2', url: 'https://github.com/acme/api/pull/2' },
+    { key: 'github:acme/web#3', url: 'https://github.com/acme/web/pull/3' },
+  ]
+  const [one, two, three] = band.map(i => i.key)
+  const groups = [
+    { label: 'round 1', prs: [one!, two!] },
+    { step: 'apply the migration', prs: [] },
+    { label: 'round 2', text: 'after the migration', prs: [three!] },
+  ]
+
+  test('put moves a PR into a group at a place, and remove sends it back to other', () => {
+    expect(editGroups(groups, [{ op: 'put', pr: 'web#3', group: 0, at: 1 }], band)).toEqual({
+      groups: [{ label: 'round 1', prs: [one, three, two] }, groups[1], { label: 'round 2', text: 'after the migration', prs: [] }],
+      links: [band[2]],
+      notes: [],
+    })
+    // a PR not in the band joins it through its repo's owner
+    expect(editGroups(groups, [{ op: 'put', pr: 'api#9', group: 2 }], band).groups[2]!.prs).toEqual([three, 'github:acme/api#9'])
+    expect(editGroups(groups, [{ op: 'remove', pr: 'https://github.com/acme/api/pull/1' }], band).groups[0]!.prs).toEqual([two])
+  })
+
+  test('set changes one group, and a step takes its text or done', () => {
+    const edited = editGroups(
+      groups,
+      [
+        { op: 'set', group: 0, label: 'first', text: 'merge any time' },
+        { op: 'set', group: 2, text: '' },
+        { op: 'set', group: 1, done: true },
+      ],
+      band,
+    )
+    expect(edited.groups).toEqual([
+      { label: 'first', text: 'merge any time', prs: [one, two] },
+      { step: 'apply the migration', isDone: true, prs: [] },
+      { label: 'round 2', prs: [three] },
+    ])
+    expect(edited.notes).toEqual([])
+    expect(editGroups(edited.groups, [{ op: 'set', group: 1, done: false, step: 'run the migration' }], band).groups[1]).toEqual({
+      step: 'run the migration',
+      prs: [],
+    })
+  })
+
+  test('insert and delete; each edit sees the groups the edits before it left', () => {
+    const edited = editGroups(
+      groups,
+      [
+        { op: 'insert', at: 0, step: 'load the secrets' },
+        { op: 'delete', group: 2 },
+        { op: 'insert', label: 'last', prs: ['api#2'] },
+      ],
+      band,
+    )
+    expect(edited.groups).toEqual([
+      { step: 'load the secrets', prs: [] },
+      { label: 'round 1', prs: [one] },
+      { label: 'round 2', text: 'after the migration', prs: [three] },
+      { label: 'last', prs: [two] },
+    ])
+  })
+
+  test('a group left empty goes once the edits are done, and bad edits are noted', () => {
+    const solo = [{ prs: [three!] }, { label: 'keep', prs: [] }]
+    expect(editGroups(solo, [{ op: 'put', pr: 'web#3', group: 1 }], band).groups).toEqual([{ label: 'keep', prs: [three] }])
+    const edited = editGroups(
+      groups,
+      [
+        { op: 'put', pr: 'api#1', group: 1 },
+        { op: 'put', pr: 'api#1', group: 7 },
+        { op: 'put', pr: 'nope', group: 0 },
+        { op: 'set', group: 0, done: true },
+        { op: 'move' },
+        { op: 'insert' },
+      ],
+      band,
+    )
+    expect(edited.groups).toEqual(groups)
+    expect(edited.notes).toEqual([
+      'Edit 1: group 1 is a step, which holds no PRs.',
+      'Edit 2: no group 7 (groups run from 0 to 2).',
+      'Edit 3: "nope" is not a PR link, owner/repo#N, or a repo#N for a repo in the band.',
+      'Edit 4: group 0 is not a step; set its label or text.',
+      'Edit 5: unknown op "move"; use put, remove, set, insert or delete.',
+      'Edit 6: an insert needs a label, text, PRs or a step.',
+    ])
   })
 })
