@@ -747,3 +747,41 @@ test('a session start redraws the band and drops the old Diff setting', async ($
   expect(invalidated).toHaveLength(1)
   expect(store.has('isDiff')).toBe(false)
 })
+
+test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts the result', async ($, on) => {
+  const clock = world(on)
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => (toasts.push(e.text), { value: undefined }))
+  let finish = (_code: number) => {}
+  const logins: { argv: string[]; browser?: string; timeoutMs?: number }[] = []
+  on('process.run', async (_$, e) => {
+    if (e.argv[0] !== 'gcloud') return ran(pr('OPEN'))
+    logins.push({ argv: [...e.argv], browser: e.init?.env?.BROWSER, timeoutMs: e.init?.timeoutMs })
+    const code = await new Promise<number>(resolve => (finish = resolve))
+    const stderr = code === 0 ? 'You are now logged in.\n' : 'ERROR: (gcloud.auth.login) There was a problem.\n'
+    return { value: { exitCode: code, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const label = async () => (await ui.find({ key: 'gcloud-login' }))?.text
+
+  expect(await label()).toBe('🔑 gcloud')
+  await ui.press({ key: 'gcloud-login' })
+  expect(await label()).toBe('🔑 signing in…')
+  // a second press while gcloud waits does not start another sign-in
+  await ui.press({ key: 'gcloud-login' })
+  expect(logins).toEqual([
+    { argv: ['gcloud', 'auth', 'login'], browser: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser', timeoutMs: 300_000 },
+  ])
+
+  finish(0)
+  await clock.advance(1)
+  expect(await label()).toBe('🔑 gcloud')
+  expect(toasts).toEqual(['gcloud: signed in'])
+
+  await ui.press({ key: 'gcloud-login' })
+  finish(1)
+  await clock.advance(1)
+  expect(toasts.at(-1)).toBe('gcloud sign-in failed: ERROR: (gcloud.auth.login) There was a problem.')
+})

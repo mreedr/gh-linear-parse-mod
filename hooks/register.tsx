@@ -56,6 +56,7 @@ const refreshing = atom({ plugin: 'gh-linear-parse-mod', key: 'refreshing' } as 
 const agentStatus = atom({ plugin: 'gh-linear-parse-mod', key: 'agentStatus' } as const, null as StatusNote | null)
 const hidesAwaitingReview = atom({ plugin: 'gh-linear-parse-mod', key: 'hidesAwaitingReview' } as const, false)
 const prGroups = atom({ plugin: 'gh-linear-parse-mod', key: 'prGroups' } as const, null as PrGroup[] | null)
+const isSigningIn = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningIn' } as const, false)
 
 const SHOWN = 5
 const MAX_STORED = 40
@@ -68,6 +69,9 @@ const STATUS_TOOL = 'mcp__gh-linear-parse-mod__set_status'
 const GROUP_TOOL = 'mcp__gh-linear-parse-mod__group_prs'
 const MAX_STATUS = 120
 const RECHECK_MS = 15_000
+// gcloud opens its sign-in page through Python's webbrowser, which takes BROWSER as a plain program path.
+const BRAVE = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
+const SIGN_IN_MS = 5 * 60_000
 const CI_POLL_MS = 90_000
 const CI_POLL_WINDOW_MS = 6 * 60 * 60_000
 const WATCH_MS = 5 * 60_000
@@ -354,6 +358,18 @@ function frame(style: BandColor | null): Partial<BoxProps> {
   return { borderStyle: 'round', borderColor: style.color, paddingX: 1 }
 }
 
+async function gcloudLogin($: $) {
+  if (await read($, isSigningIn)) return
+  await update($, isSigningIn, () => true)
+  try {
+    const ran = await $.process.run(['gcloud', 'auth', 'login'], { env: { BROWSER: BRAVE }, timeoutMs: SIGN_IN_MS }).catch(() => null)
+    const reason = ran?.stderr.trim().split('\n').filter(Boolean).at(-1)
+    $.ui.toast(ran?.exitCode === 0 ? 'gcloud: signed in' : `gcloud sign-in failed${reason ? `: ${reason.slice(0, 120)}` : ''}`)
+  } finally {
+    await update($, isSigningIn, () => false)
+  }
+}
+
 async function setHidden($: $, value: boolean) {
   await update($, isHidden, () => value)
   await $.store.set('isHidden', value)
@@ -380,6 +396,7 @@ export const register: Register = (on, options) => {
     await update($, items, list => list.filter(i => i.key))
     // a reload ends the refresh loops that were counted
     await update($, refreshing, () => 0)
+    await update($, isSigningIn, () => false)
     await restore($).catch(() => undefined)
     backfillSoon($)
     await fetchMissingCounts($)
@@ -666,6 +683,7 @@ export const register: Register = (on, options) => {
     const issues = await read($, issueStatuses)
     const updatedAt = lastChecked(list.map(i => i.key), { ...known, ...issues })
     const isRefreshing = (await read($, refreshing)) > 0
+    const signInLabel = (await read($, isSigningIn)) ? '🔑 signing in…' : '🔑 gcloud'
     const { github: ungrouped, linear } = bandGroups(visible)
     const githubLayout = githubRows(groups, shown, ungrouped)
     const github = githubLayout.flatMap(r => (r.kind === 'pr' ? [r.item] : []))
@@ -811,7 +829,7 @@ export const register: Register = (on, options) => {
     const title = `Session links (${list.length})`
     const expandLabel = expanded ? 'Show less' : `Show ${more} more`
     // The time goes first when the header would not fit on one line.
-    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
+    const actions = [canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', signInLabel, awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
     const headerLead = 2
     const headerNeeds = (withTime: boolean) =>
       headerLead + textWidth(title) + (withTime && updatedAt !== undefined ? 3 + textWidth(`updated ${clockTime(updatedAt)}`) : 0) +
@@ -845,6 +863,7 @@ export const register: Register = (on, options) => {
               onPress={() => void refreshAll($)}
             />
           )}
+          <Button key="gcloud-login" label={signInLabel} plain dimColor onPress={() => void gcloudLogin($)} />
           {awaiting > 0 && (
             <Button
               key="awaiting-review"

@@ -72,6 +72,7 @@ declare module 'claude-code' {
       agentStatus: StatusNote | null
       prGroups: PrGroup[] | null
       hidesAwaitingReview: boolean
+      isSigningIn: boolean
     }
   }
 }
