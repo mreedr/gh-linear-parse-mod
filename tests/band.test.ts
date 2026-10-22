@@ -736,6 +736,8 @@ test('a resumed session gets its PR groups back', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(10)
   expect((await band()).groups).toEqual([{ label: 'first', text: 'then the rest', prs: ['https://github.com/a/b/pull/2'] }])
+  // #1 was in the band when the groups were set, so it is not new since then
+  expect((await band()).sinceGrouping).toEqual({ landed: [], notGrouped: [] })
 })
 
 test('a session start redraws the band and drops the old Diff setting', async ($, on) => {
@@ -812,4 +814,76 @@ test('the header puts app buttons after the title, apart from the band buttons o
   const drawn = (await ui.drawn()) as unknown as { children: { children: { props?: { key?: string } }[] }[] }
   const keys = drawn.children[0]?.children.map(c => c.props?.key).filter(Boolean)
   expect(keys).toEqual(['pad', 'updated', 'app-gap', 'gcloud-login', 'spacer', 'refresh', 'sweep', 'hide'])
+})
+
+test('with groups up, landed PRs leave their groups for a folded landed row and done groups get a ✓', async ($, on) => {
+  const clock = world(on)
+  const states: Record<string, string> = { '1': 'OPEN', '2': 'OPEN', '3': 'OPEN', '4': 'OPEN' }
+  on('process.run', async (_$, e) => ran(pr(states[e.argv[3]!] ?? 'OPEN')))
+  on('prompt.compose', async () => ({ sections: [] }))
+  const band = async () => JSON.parse(String((await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__links_band' })).result))
+  const mount = () => $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const lines = async () =>
+    (await (await mount()).findAll({ type: 'Box' }))
+      .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
+      .map(b => b.text.replace(/^x/, '').trim())
+  const refresh = async () => {
+    await (await mount()).press({ key: 'refresh' })
+    await clock.advance(10)
+  }
+  const nudged = async () =>
+    (
+      await $.prompt.compose({
+        model: 'claude-opus-5-5',
+        promptModel: 'claude-opus-5-5',
+        surfaces: ['terminal'],
+        tools: ['mcp__gh-linear-parse-mod__group_prs'],
+        outputStyle: null,
+        traits: [],
+      })
+    ).sections.some(s => s.id === 'gh-linear-parse-mod:group-nudge')
+
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2 https://github.com/a/b/pull/3'))
+  await clock.advance(10)
+  expect(await nudged()).toBe(false)
+  await $.tool.call({
+    tool: 'mcp__gh-linear-parse-mod__group_prs',
+    groups: [{ label: 'round 1', prs: ['b#1', 'b#2'] }, { label: 'round 2', text: 'after round 1', prs: ['b#3'] }],
+  } as never)
+  expect(await nudged()).toBe(true)
+  expect((await band()).sinceGrouping).toEqual({ landed: [], notGrouped: [] })
+
+  states['1'] = 'MERGED'
+  await refresh()
+  expect(await lines()).toEqual(['── round 1 ──', '🟢    🦯 b | #2', '── round 2 ──', 'after round 1', '🟢    🦯 b | #3', '── ▸ landed (1) ──'])
+  expect((await band()).sinceGrouping.landed).toEqual(['https://github.com/a/b/pull/1'])
+  expect((await band()).shownInBand).toBe(2)
+
+  await (await mount()).press({ key: 'landed' })
+  expect((await lines()).slice(-2)).toEqual(['── ▾ landed (1) ──', '🟣    🌒 b | #1'])
+  expect((await band()).shownInBand).toBe(3)
+
+  // every PR in round 1 landed, and a new PR joins the band outside the groups
+  states['2'] = 'CLOSED'
+  await $.prompt.submit(submit('https://github.com/a/b/pull/4'))
+  await refresh()
+  expect(await lines()).toEqual([
+    '── round 1 ✓ ──',
+    '── round 2 ──',
+    'after round 1',
+    '🟢    🦯 b | #3',
+    '── other ──',
+    '🟢    🦯 b | #4',
+    '── ▾ landed (2) ──',
+    '🟣    🌒 b | #1',
+    '⚫       b | #2',
+  ])
+  expect((await band()).sinceGrouping).toEqual({
+    landed: ['https://github.com/a/b/pull/1', 'https://github.com/a/b/pull/2'],
+    notGrouped: ['https://github.com/a/b/pull/4'],
+  })
+
+  // 🧹 drops the landed PRs and the group they finished
+  await (await mount()).press({ key: 'sweep' })
+  expect(await lines()).toEqual(['── round 2 ──', 'after round 1', '🟢    🦯 b | #3', '── other ──', '🟢    🦯 b | #4'])
 })

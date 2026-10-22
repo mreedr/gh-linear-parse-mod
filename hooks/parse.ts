@@ -489,20 +489,43 @@ export function parseGroups(input: unknown, band: readonly Item[]): ParsedGroups
 export const withoutPrs = (groups: readonly PrGroup[], keys: readonly string[]): PrGroup[] =>
   groups.map(g => ({ ...g, prs: g.prs.filter(k => !keys.includes(k)) })).filter(g => g.label || g.text || g.prs.length > 0)
 
+// Drops the groups whose PRs all went, and those PRs from the rest.
+export const withoutDone = (groups: readonly PrGroup[], keys: readonly string[]): PrGroup[] =>
+  withoutPrs(groups.filter(g => g.prs.length === 0 || g.prs.some(k => !keys.includes(k))), keys)
+
 export type GithubRow =
-  | { kind: 'label'; group?: number; text: string }
-  | { kind: 'text'; group: number; text: string }
+  | { kind: 'label'; group?: number; text: string; isDone?: boolean }
+  | { kind: 'text'; group: number; text: string; isDone?: boolean }
+  | { kind: 'landed'; count: number; isOpen: boolean }
   | { kind: 'pr'; item: Item }
 
+export type Landed = {
+  // The merged and closed PRs in view, folded into one row under the rest.
+  items: readonly Item[]
+  // Every merged or closed PR in the band, in view or not.
+  finished: ReadonlySet<string>
+  listed: ReadonlySet<string>
+  isOpen: boolean
+}
+
 // The GitHub section top to bottom: each group's label, text and PRs, then the PRs in
-// no group (newest first) under `other`.
-export function githubRows(groups: readonly PrGroup[], band: readonly Item[], rest: readonly Item[]): GithubRow[] {
+// no group (newest first) under `other`, then the landed row. A group whose PRs have
+// all landed is done.
+export function githubRows(groups: readonly PrGroup[], band: readonly Item[], rest: readonly Item[], landed?: Landed): GithubRow[] {
   const byKey = new Map(band.map(i => [i.key, i]))
-  const rows: GithubRow[] = groups.flatMap((g, group): GithubRow[] => [
-    ...(g.label ? [{ kind: 'label' as const, group, text: g.label }] : []),
-    ...(g.text ? [{ kind: 'text' as const, group, text: g.text }] : []),
-    ...g.prs.flatMap(k => (byKey.has(k) ? [{ kind: 'pr' as const, item: byKey.get(k)! }] : [])),
-  ])
+  const rows: GithubRow[] = groups.flatMap((g, group): GithubRow[] => {
+    const listed = landed ? g.prs.filter(k => landed.listed.has(k)) : []
+    const isDone = listed.length > 0 && listed.every(k => landed!.finished.has(k))
+    const prs = g.prs.filter(k => byKey.has(k) && !landed?.finished.has(k))
+    return [
+      ...(g.label ? [{ kind: 'label' as const, group, text: g.label, ...(isDone && { isDone }) }] : []),
+      ...(g.text ? [{ kind: 'text' as const, group, text: g.text, ...(isDone && !g.label && { isDone }) }] : []),
+      ...prs.map(k => ({ kind: 'pr' as const, item: byKey.get(k)! })),
+    ]
+  })
   if (groups.length > 0 && rest.length > 0) rows.push({ kind: 'label', text: 'other' })
-  return [...rows, ...rest.map(item => ({ kind: 'pr' as const, item }))]
+  rows.push(...rest.map(item => ({ kind: 'pr' as const, item })))
+  if (!landed || landed.items.length === 0) return rows
+  rows.push({ kind: 'landed', count: landed.items.length, isOpen: landed.isOpen })
+  return landed.isOpen ? [...rows, ...landed.items.map(item => ({ kind: 'pr' as const, item }))] : rows
 }

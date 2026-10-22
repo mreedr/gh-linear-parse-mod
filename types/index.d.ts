@@ -42,6 +42,13 @@ export type PrGroup = {
   prs: string[]
 }
 
+// The PRs in the band when the groups were last set, and which were still open, so
+// links_band can say what changed since.
+export type GroupingBase = {
+  seen: string[]
+  live: string[]
+}
+
 export type BandColor = {
   color: string
   isFill: boolean
@@ -71,6 +78,8 @@ declare module 'claude-code' {
       refreshing: number
       agentStatus: StatusNote | null
       prGroups: PrGroup[] | null
+      groupingBase: GroupingBase | null
+      showsLanded: boolean
       hidesAwaitingReview: boolean
       isSigningIn: boolean
     }

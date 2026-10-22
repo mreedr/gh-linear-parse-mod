@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { BoxProps, EngineInterface, Register } from 'claude-code'
 
-import type { StatusNote, BandColor, IssueStatus, Item, PrGroup, PrStatus } from '../types'
+import type { StatusNote, BandColor, GroupingBase, IssueStatus, Item, PrGroup, PrStatus } from '../types'
 import { openLink } from './browser'
 import {
   PR_FIELDS,
@@ -37,6 +37,7 @@ import {
   statusGlyphs,
   textWidth,
   watchKeys,
+  withoutDone,
   withoutPrs,
 } from './parse'
 
@@ -56,6 +57,8 @@ const refreshing = atom({ plugin: 'gh-linear-parse-mod', key: 'refreshing' } as 
 const agentStatus = atom({ plugin: 'gh-linear-parse-mod', key: 'agentStatus' } as const, null as StatusNote | null)
 const hidesAwaitingReview = atom({ plugin: 'gh-linear-parse-mod', key: 'hidesAwaitingReview' } as const, false)
 const prGroups = atom({ plugin: 'gh-linear-parse-mod', key: 'prGroups' } as const, null as PrGroup[] | null)
+const groupingBase = atom({ plugin: 'gh-linear-parse-mod', key: 'groupingBase' } as const, null as GroupingBase | null)
+const showsLanded = atom({ plugin: 'gh-linear-parse-mod', key: 'showsLanded' } as const, false)
 const isSigningIn = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningIn' } as const, false)
 
 const SHOWN = 5
@@ -104,6 +107,13 @@ const NUDGE = {
   text: `Keep a status line current in the links band above the prompt with ${STATUS_TOOL}: set it, in under 80 characters, when you start work that will take more than a minute or begin waiting on something (CI, a subagent, a review); update it when that changes; and clear it with an empty text when you finish. Only the main conversation sets it; subagents leave it alone.`,
 } as const
 
+// While PRs are grouped, each request's system prompt asks the agent to keep the grouping current.
+const GROUP_NUDGE = {
+  id: 'gh-linear-parse-mod:group-nudge',
+  scope: 'session',
+  text: `The person has grouped the PRs in the links band above the prompt. After you open, merge or close a PR, read ${STATE_TOOL}: when its sinceGrouping lists open PRs in no group, or the plan's steps have moved on, update the grouping with ${GROUP_TOOL}. Merged and closed PRs leave their groups on their own.`,
+} as const
+
 // Whether each request's system prompt asks the agent to keep its status; on unless turned off.
 async function isNudging($: $): Promise<boolean> {
   try {
@@ -120,17 +130,21 @@ const isItem = (x: unknown): x is Item =>
 const isGroup = (x: unknown): x is PrGroup =>
   typeof x === 'object' && x !== null && Array.isArray((x as PrGroup).prs) && (x as PrGroup).prs.every(k => typeof k === 'string')
 
+const isStrings = (x: unknown): x is string[] => Array.isArray(x) && x.every(k => typeof k === 'string')
+const isBase = (x: unknown): x is GroupingBase =>
+  typeof x === 'object' && x !== null && isStrings((x as GroupingBase).seen) && isStrings((x as GroupingBase).live)
+
 // Each session's links and dismissals, kept across restarts so a resumed session gets
 // its band back even when compaction took the links out of the transcript.
 async function persist($: $) {
   try {
     const id = await $.session.id()
-    const [list, gone, groups] = await Promise.all([read($, items), read($, dismissed), read($, prGroups)])
+    const [list, gone, groups, base] = await Promise.all([read($, items), read($, dismissed), read($, prGroups), read($, groupingBase)])
     const saved = await $.store.get('sessions')
     const index = Array.isArray(saved) ? saved.filter((s): s is string => typeof s === 'string') : []
     const ids = [id, ...index.filter(s => s !== id)]
     for (const old of ids.slice(SAVED_SESSIONS)) await $.store.delete(`links:${old}`)
-    await $.store.set(`links:${id}`, { items: list, dismissed: gone, groups })
+    await $.store.set(`links:${id}`, { items: list, dismissed: gone, groups, base })
     await $.store.set('sessions', ids.slice(0, SAVED_SESSIONS))
   } catch {
     // an unsaved band is rebuilt from the transcript on resume
@@ -139,7 +153,7 @@ async function persist($: $) {
 
 async function restore($: $) {
   if ((await read($, items)).length > 0) return
-  const saved = (await $.store.get(`links:${await $.session.id()}`)) as { items?: unknown; dismissed?: unknown; groups?: unknown } | undefined
+  const saved = (await $.store.get(`links:${await $.session.id()}`)) as { items?: unknown; dismissed?: unknown; groups?: unknown; base?: unknown } | undefined
   if (!saved || !Array.isArray(saved.items)) return
   const list = saved.items.filter(isItem)
   const gone = Array.isArray(saved.dismissed) ? saved.dismissed.filter((k): k is string => typeof k === 'string') : []
@@ -147,6 +161,7 @@ async function restore($: $) {
   await update($, items, current => (current.length > 0 ? current : list))
   const groups = Array.isArray(saved.groups) ? saved.groups.filter(isGroup) : []
   if (groups.length > 0) await update($, prGroups, current => current ?? groups)
+  if (groups.length > 0 && isBase(saved.base)) await update($, groupingBase, current => current ?? (saved.base as GroupingBase))
   refreshSoon($, list.map(i => i.key).filter(isChecked))
 }
 
@@ -331,13 +346,20 @@ async function sweep($: $) {
   if (keys.length === 0) return
   await update($, dismissed, gone => keys.reduce((acc, k) => addKey(acc, k, MAX_DISMISSED), gone))
   await update($, items, list => list.filter(i => !keys.includes(i.key)))
-  await update($, prGroups, groups => groups && withoutPrs(groups, keys))
+  await update($, prGroups, groups => {
+    const left = groups && withoutDone(groups, keys)
+    return left && left.length > 0 ? left : null
+  })
   await persist($)
   await update($, prStatuses, s => Object.fromEntries(Object.entries(s).filter(([k]) => !keys.includes(k))))
 }
 
 async function setGroups($: $, groups: PrGroup[] | null) {
-  await update($, prGroups, () => (groups && groups.length > 0 ? groups : null))
+  const isSet = groups !== null && groups.length > 0
+  const known = await read($, prStatuses)
+  const prs = (await read($, items)).map(i => i.key).filter(isPrKey)
+  await update($, prGroups, () => (isSet ? groups : null))
+  await update($, groupingBase, () => (isSet ? { seen: prs, live: prs.filter(k => !isFinished(known[k])) } : null))
   await persist($)
 }
 
@@ -406,7 +428,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'links_band',
       description:
-        "Returns this session's gh-linear-parse-mod links band: the GitHub PR and Linear links newest first (the band shows PRs above Linear links) with each PR's title, author, lines added and deleted, state, CI and review status, whether it has a merge conflict, and each Linear issue's status, as last checked, the links dismissed this session, whether the band is hidden or expanded, and its color. Read-only.",
+        "Returns this session's gh-linear-parse-mod links band: the GitHub PR and Linear links newest first (the band shows PRs above Linear links) with each PR's title, author, lines added and deleted, state, CI and review status, whether it has a merge conflict, and each Linear issue's status, as last checked, the links dismissed this session, whether the band is hidden or expanded, its color, and, while PRs are grouped, sinceGrouping: the grouped PRs that merged or closed and the open PRs that joined the band since group_prs last set the groups. Read-only.",
       inputSchema: { type: 'object', properties: {} },
       isDeferred: false,
     })
@@ -423,7 +445,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'group_prs',
       description:
-        "Sets how the GitHub section of the gh-linear-parse-mod links band is grouped: a list of groups, top to bottom, each with an optional label (a divider such as \"round 1\" or \"blocked\"), an optional line of text, and optional PRs (PR links, owner/repo#N, or repo#N for a PR already in the band). A group with only a label or text is informational, such as a step between rounds. Sends the whole layout each time and replaces the last one; an empty list clears it. PRs not in any group show under \"other\". Use it only when the person asks you to group or order PRs (for example through /gh-linear-parse-mod group), or to keep a grouping they asked for current.",
+        "Sets how the GitHub section of the gh-linear-parse-mod links band is grouped: a list of groups, top to bottom, each with an optional label (a divider such as \"round 1\" or \"blocked\"), an optional line of text, and optional PRs (PR links, owner/repo#N, or repo#N for a PR already in the band). A group with only a label or text is informational, such as a step between rounds. Sends the whole layout each time and replaces the last one; an empty list clears it. PRs not in any group show under \"other\". Use it only when the person asks you to group or order PRs (for example through /gh-linear-parse-mod group), or to keep a grouping they asked for current. Merged and closed PRs leave their groups on their own and fold into a landed row at the bottom, and a group whose PRs have all landed shows a ✓, so never make a group for merged or closed PRs.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -473,6 +495,8 @@ export const register: Register = (on, options) => {
       await update($, hasBackfilled, () => false)
       await update($, agentStatus, () => null)
       await update($, prGroups, () => null)
+      await update($, groupingBase, () => null)
+      await update($, showsLanded, () => false)
     }
 
     return next(e)
@@ -490,10 +514,20 @@ export const register: Register = (on, options) => {
     ])
     const issues = await read($, issueStatuses)
     const groups = await read($, prGroups)
+    const base = await read($, groupingBase)
     const hidesReview = await read($, hidesAwaitingReview)
     const inView = hidesReview ? links.filter(i => !isAwaitingReview(known[i.key])) : links
     const grouped = new Set(groups?.flatMap(g => g.prs) ?? [])
-    const ungrouped = inView.filter(i => !grouped.has(i.key)).length
+    // With groups up, merged and closed PRs fold into the landed row.
+    const landed = groups ? inView.filter(i => isFinished(known[i.key])).length : 0
+    const ungrouped = inView.filter(i => !grouped.has(i.key) && !(groups && isFinished(known[i.key]))).length
+    const urlOf = (k: string) => links.find(i => i.key === k)?.url ?? k
+    const sinceGrouping = groups && {
+      landed: (base?.live ?? []).filter(k => grouped.has(k) && isFinished(known[k])).map(urlOf),
+      notGrouped: links
+        .filter(i => isPrKey(i.key) && !grouped.has(i.key) && !base?.seen.includes(i.key) && !isFinished(known[i.key]))
+        .map(i => i.url),
+    }
     const state = {
       links: links.map(i => {
         const s = known[i.key]
@@ -506,9 +540,12 @@ export const register: Register = (on, options) => {
       dismissed: gone,
       isHidden: hidden,
       isExpanded: expanded,
-      shownInBand: hidden ? 0 : inView.length - ungrouped + (expanded ? ungrouped : Math.min(ungrouped, SHOWN)),
+      shownInBand: hidden
+        ? 0
+        : inView.length - ungrouped - landed + (expanded ? ungrouped : Math.min(ungrouped, SHOWN)) + ((await read($, showsLanded)) ? landed : 0),
       hidesAwaitingReview: hidesReview,
-      groups: groups && groups.map(g => ({ ...g, prs: g.prs.map(k => links.find(i => i.key === k)?.url ?? k) })),
+      groups: groups && groups.map(g => ({ ...g, prs: g.prs.map(urlOf) })),
+      sinceGrouping,
       isWatching: watching,
       isNudging: await isNudging($),
       agentStatus: (st => (st ? { text: st.text, setAt: new Date(st.setAt).toISOString() } : null))(await read($, agentStatus)),
@@ -582,6 +619,8 @@ export const register: Register = (on, options) => {
     }
     if (arg === 'clear') {
       await update($, prGroups, () => null)
+      await update($, groupingBase, () => null)
+      await update($, showsLanded, () => false)
       await update($, items, () => [])
       await update($, prStatuses, () => ({}))
       await update($, issueStatuses, () => ({}))
@@ -662,9 +701,13 @@ export const register: Register = (on, options) => {
 
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    if (!e.tools.includes(STATUS_TOOL) || !(await isNudging($))) return composed
+    const nudges = [
+      ...(e.tools.includes(STATUS_TOOL) && (await isNudging($)) ? [NUDGE] : []),
+      ...(e.tools.includes(GROUP_TOOL) && (await read($, prGroups)) ? [GROUP_NUDGE] : []),
+    ]
+    if (nudges.length === 0) return composed
 
-    return { sections: [...composed.sections.filter(c => c.id !== NUDGE.id), NUDGE] }
+    return { sections: [...composed.sections.filter(c => !nudges.some(n => n.id === c.id)), ...nudges] }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -682,8 +725,11 @@ export const register: Register = (on, options) => {
     const hidesReview = await read($, hidesAwaitingReview)
     const awaiting = list.filter(i => isAwaitingReview(known[i.key])).length
     const shown = hidesReview ? list.filter(i => !isAwaitingReview(known[i.key])) : list
-    // Grouped PRs always show; Show N more collapses the rest.
-    const rest = shown.filter(i => !grouped.has(i.key))
+    // Grouped PRs always show; Show N more collapses the rest. With groups up, merged and
+    // closed PRs leave them for one landed row, folded until pressed.
+    const isLanded = (i: Item) => groups.length > 0 && isFinished(known[i.key])
+    const landedItems = shown.filter(isLanded)
+    const rest = shown.filter(i => !grouped.has(i.key) && !isLanded(i))
     const more = rest.length - SHOWN
     const expanded = more > 0 && (await read($, isExpanded))
     const style = await read($, bandColor)
@@ -693,7 +739,13 @@ export const register: Register = (on, options) => {
     const isRefreshing = (await read($, refreshing)) > 0
     const signInLabel = (await read($, isSigningIn)) ? '🔑 signing in…' : '🔑 gcloud'
     const { github: ungrouped, linear } = bandGroups(visible)
-    const githubLayout = githubRows(groups, shown, ungrouped)
+    const landed = {
+      items: landedItems,
+      finished: new Set(list.filter(isLanded).map(i => i.key)),
+      listed: new Set(list.map(i => i.key)),
+      isOpen: await read($, showsLanded),
+    }
+    const githubLayout = githubRows(groups, shown, ungrouped, landed)
     const github = githubLayout.flatMap(r => (r.kind === 'pr' ? [r.item] : []))
     const hasPr = github.length > 0
     const hasIssueSlot = linear.some(i => issues[i.key])
@@ -808,11 +860,26 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    // A group's label is a dim divider and its text a dim italic line.
+    // A group's label is a dim divider and its text a dim italic line; a done group gets a ✓.
     const githubRow = (r: (typeof githubLayout)[number]) => {
       if (r.kind === 'pr') return row(r.item)
+      if (r.kind === 'landed') {
+        return (
+          <Box key="group-landed" flexDirection="row" gap={1}>
+            <Box key="pad" width={1} />
+            <Button
+              key="landed"
+              label={`── ${r.isOpen ? '▾' : '▸'} landed (${r.count}) ──`}
+              plain
+              dimColor
+              onPress={() => update($, showsLanded, v => !v)}
+            />
+          </Box>
+        )
+      }
       const key = r.group === undefined ? 'group-other' : `group-${r.kind}:${r.group}`
-      const text = r.kind === 'label' ? `── ${r.text} ──` : `   ${r.text}`
+      const done = r.isDone ? ' ✓' : ''
+      const text = r.kind === 'label' ? `── ${r.text}${done} ──` : `   ${r.text}${done}`
       return (
         <Box key={key} flexDirection="row" gap={1}>
           <Box key="pad" width={1} />

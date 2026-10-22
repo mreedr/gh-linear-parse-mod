@@ -131,15 +131,19 @@ PR CI Rv GitHub
    run the smoke checks on staging after round 1
 ── other ──
 🟢 ✅ 🚀 api | #46 fix typo
+── ▸ landed (2) ──
 ```
 
 Labels are dim dividers and text is a dim italic line; PR rows draw as they always do.
 PRs in no group show under `other`, newest first, and mentioning a grouped PR does not move it.
 Grouped PRs always show; `Show N more` collapses only the rest.
-`x` on a PR, or 🧹, takes it out of its group.
+`x` on a PR takes it out of its group.
 Labels and text lines have no `x`; ask Claude to change the grouping, or `group clear` to drop it.
-Merged PRs stay in their group, dimmed, until 🧹.
+Merged and closed PRs leave their groups on their own and fold into one `landed (N)` row at the bottom; press it to show or fold them.
+A group whose PRs have all landed shows a ✓ after its label, and 🧹 dismisses the landed PRs along with the groups they finished.
 The grouping is saved with the session's links, `links_band` reports it, and `group clear` or `clear` drops it.
+`links_band` also reports `sinceGrouping`: the grouped PRs that landed and the open PRs that joined the band since the grouping was set.
+While PRs are grouped, Claude's system prompt asks it to check that after it opens, merges or closes a PR, and to keep the grouping current.
 
 ## Develop
 

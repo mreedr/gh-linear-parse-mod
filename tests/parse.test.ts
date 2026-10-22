@@ -4,6 +4,7 @@ import {
   githubRows,
   parseGroups,
   resolvePr,
+  withoutDone,
   withoutPrs,
   isIssueKey,
   issueGlyph,
@@ -504,5 +505,26 @@ describe('PR groups', () => {
     ])
     expect(githubRows([], band, [a!, b!])).toEqual([{ kind: 'pr', item: a }, { kind: 'pr', item: b }])
     expect(withoutPrs([{ prs: [c!.key] }, { label: 'x', prs: [c!.key] }], [c!.key])).toEqual([{ label: 'x', prs: [] }])
+  })
+
+  test('landed PRs leave their groups for the landed row, and a group whose PRs all landed is done', () => {
+    const [a, b, c] = band
+    const groups = [{ label: 'round 1', prs: [a!.key, b!.key] }, { text: 'step', prs: [c!.key] }, { label: 'note', prs: [] }]
+    const landed = (isOpen: boolean) => ({
+      items: [b!, c!],
+      finished: new Set([b!.key, c!.key]),
+      listed: new Set(band.map(i => i.key)),
+      isOpen,
+    })
+    expect(githubRows(groups, band, [], landed(false))).toEqual([
+      { kind: 'label', group: 0, text: 'round 1' },
+      { kind: 'pr', item: a },
+      { kind: 'text', group: 1, text: 'step', isDone: true },
+      { kind: 'label', group: 2, text: 'note' },
+      { kind: 'landed', count: 2, isOpen: false },
+    ])
+    expect(githubRows(groups, band, [], landed(true)).slice(-2)).toEqual([{ kind: 'pr', item: b }, { kind: 'pr', item: c }])
+    // a sweep drops the groups it finished, and keeps notes
+    expect(withoutDone(groups, [b!.key, c!.key])).toEqual([{ label: 'round 1', prs: [a!.key] }, { label: 'note', prs: [] }])
   })
 })
