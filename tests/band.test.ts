@@ -801,6 +801,52 @@ test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts th
   expect(toasts.at(-1)).toBe('gcloud sign-in failed: ERROR: (gcloud.auth.login) There was a problem.')
 })
 
+test('🔑 vercel runs npx vercel login, opens its device page in Brave and toasts the result', async ($, on) => {
+  const clock = world(on)
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => (toasts.push(e.text), { value: undefined }))
+  const opened: string[][] = []
+  on('process.run', async (_$, e) => {
+    if (e.argv[0] === 'open') return (opened.push([...e.argv]), ran(''))
+    return ran(pr('OPEN'))
+  })
+  let finish = (_code: number) => {}
+  const logins: { argv: string[]; ci?: string }[] = []
+  on('process.spawn', async function* (_$, e) {
+    logins.push({ argv: [...e.argv], ci: e.env?.CI })
+    yield { stream: 'stderr' as const, text: '\nVercel CLI 65.2.0\n> \n  Visit https://vercel.com/oauth/device?user_' }
+    yield { stream: 'stderr' as const, text: 'code=ABCD-EFGH\n' }
+    const code = await new Promise<number>(resolve => (finish = resolve))
+    if (code !== 0) yield { stream: 'stderr' as const, text: 'Error: The device code expired.\n' }
+    return { value: { code, signal: null } }
+  })
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const label = async () => (await ui.find({ key: 'vercel-login' }))?.text
+
+  expect(await label()).toBe('🔑 vercel')
+  await ui.press({ key: 'vercel-login' })
+  await clock.advance(1)
+  expect(await label()).toBe('🔑 signing in…')
+  // a second press while vercel waits does not start another sign-in
+  await ui.press({ key: 'vercel-login' })
+  // CI=1 keeps vercel from opening the default browser; the band opens the whole page in Brave once
+  expect(logins).toEqual([{ argv: ['npx', '-y', 'vercel', 'login'], ci: '1' }])
+  expect(opened).toEqual([['open', '-a', 'Brave Browser', 'https://vercel.com/oauth/device?user_code=ABCD-EFGH']])
+
+  finish(0)
+  await clock.advance(1)
+  expect(await label()).toBe('🔑 vercel')
+  expect(toasts).toEqual(['vercel: signed in'])
+
+  await ui.press({ key: 'vercel-login' })
+  await clock.advance(1)
+  finish(1)
+  await clock.advance(1)
+  expect(toasts.at(-1)).toBe('vercel sign-in failed: Error: The device code expired.')
+})
+
 test('the header puts app buttons after the title, apart from the band buttons on the right', async ($, on) => {
   const clock = world(on)
   on('process.run', async () => ran(pr('MERGED')))
@@ -809,11 +855,11 @@ test('the header puts app buttons after the title, apart from the band buttons o
   const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
 
   const header = (await ui.findAll({ type: 'Button' })).filter(b => !b.key?.startsWith('open:') && !b.key?.startsWith('dismiss:'))
-  expect(header.map(b => b.text)).toEqual(['🔑 gcloud', 'Refresh', '🧹', 'Hide'])
+  expect(header.map(b => b.text)).toEqual(['🔑 gcloud', '🔑 vercel', 'Refresh', '🧹', 'Hide'])
   // the title and time, then the app buttons, then the band's own buttons pushed right
   const drawn = (await ui.drawn()) as unknown as { children: { children: { props?: { key?: string } }[] }[] }
   const keys = drawn.children[0]?.children.map(c => c.props?.key).filter(Boolean)
-  expect(keys).toEqual(['pad', 'updated', 'app-gap', 'gcloud-login', 'spacer', 'refresh', 'sweep', 'hide'])
+  expect(keys).toEqual(['pad', 'updated', 'app-gap', 'gcloud-login', 'vercel-login', 'spacer', 'refresh', 'sweep', 'hide'])
 })
 
 test('with groups up, landed PRs leave their groups for a folded landed row and done groups get a ✓', async ($, on) => {

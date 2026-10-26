@@ -100,6 +100,7 @@ declare module 'claude-code' {
       showsLanded: boolean
       hidesAwaitingReview: boolean
       isSigningIn: boolean
+      isSigningInVercel: boolean
     }
   }
 }

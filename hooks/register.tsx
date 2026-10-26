@@ -61,6 +61,7 @@ const prGroups = atom({ plugin: 'gh-linear-parse-mod', key: 'prGroups' } as cons
 const groupingBase = atom({ plugin: 'gh-linear-parse-mod', key: 'groupingBase' } as const, null as GroupingBase | null)
 const showsLanded = atom({ plugin: 'gh-linear-parse-mod', key: 'showsLanded' } as const, false)
 const isSigningIn = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningIn' } as const, false)
+const isSigningInVercel = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningInVercel' } as const, false)
 
 const SHOWN = 5
 const MAX_STORED = 40
@@ -77,6 +78,9 @@ const RECHECK_MS = 15_000
 // gcloud opens its sign-in page through Python's webbrowser, which takes BROWSER as a plain program path.
 const BRAVE = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
 const SIGN_IN_MS = 5 * 60_000
+// vercel login opens its device page through the `open` package, which ignores BROWSER: CI=1 keeps it
+// from opening anything, and the band opens the page it prints in Brave.
+const VERCEL_PAGE = /(https:\/\/vercel\.com\/oauth\/device\S*)\s/
 const CI_POLL_MS = 90_000
 const CI_POLL_WINDOW_MS = 6 * 60 * 60_000
 const WATCH_MS = 5 * 60_000
@@ -406,7 +410,7 @@ function frame(style: BandColor | null): Partial<BoxProps> {
   return { borderStyle: 'round', borderColor: style.color, paddingX: 1 }
 }
 
-// App buttons (gcloud) sit apart from the title, left of the band's own buttons.
+// App buttons (gcloud, vercel) sit apart from the title, left of the band's own buttons.
 const APP_GAP = 1
 
 async function gcloudLogin($: $) {
@@ -418,6 +422,41 @@ async function gcloudLogin($: $) {
     $.ui.toast(ran?.exitCode === 0 ? 'gcloud: signed in' : `gcloud sign-in failed${reason ? `: ${reason.slice(0, 120)}` : ''}`)
   } finally {
     await update($, isSigningIn, () => false)
+  }
+}
+
+async function vercelLogin($: $) {
+  if (await read($, isSigningInVercel)) return
+  await update($, isSigningInVercel, () => true)
+  const login = $.process.spawn({ argv: ['npx', '-y', 'vercel', 'login'], env: { CI: '1' } })
+  let isTimedOut = false
+  const giveUp = $.clock.after(SIGN_IN_MS, () => {
+    isTimedOut = true
+    void login.return({ code: null, signal: null }).catch(() => undefined)
+  })
+  let output = ''
+  let isOpened = false
+  try {
+    for await (const { text } of login) {
+      output += text
+      const page = isOpened ? undefined : VERCEL_PAGE.exec(output)?.[1]
+      if (page) {
+        isOpened = true
+        await $.process.run(['open', '-a', 'Brave Browser', page]).catch(() => undefined)
+      }
+    }
+    const ended = await login.result.catch(() => null)
+    const reason = output.trim().split('\n').map(l => l.trim()).filter(l => l && l !== '>').at(-1)
+    $.ui.toast(
+      ended?.code === 0 ? 'vercel: signed in'
+        : isTimedOut ? 'vercel sign-in timed out'
+          : `vercel sign-in failed${reason ? `: ${reason.slice(0, 120)}` : ''}`,
+    )
+  } catch {
+    $.ui.toast('vercel sign-in failed: npx vercel did not start')
+  } finally {
+    giveUp.cancel()
+    await update($, isSigningInVercel, () => false)
   }
 }
 
@@ -448,6 +487,7 @@ export const register: Register = (on, options) => {
     // a reload ends the refresh loops that were counted
     await update($, refreshing, () => 0)
     await update($, isSigningIn, () => false)
+    await update($, isSigningInVercel, () => false)
     await restore($).catch(() => undefined)
     backfillSoon($)
     await fetchMissingCounts($)
@@ -803,6 +843,7 @@ export const register: Register = (on, options) => {
     const updatedAt = lastChecked(list.map(i => i.key), { ...known, ...issues })
     const isRefreshing = (await read($, refreshing)) > 0
     const signInLabel = (await read($, isSigningIn)) ? '🔑 signing in…' : '🔑 gcloud'
+    const vercelLabel = (await read($, isSigningInVercel)) ? '🔑 signing in…' : '🔑 vercel'
     const { github: ungrouped, linear } = bandGroups(visible)
     const landed = {
       items: landedItems,
@@ -984,7 +1025,7 @@ export const register: Register = (on, options) => {
     const title = `Session links (${list.length})`
     const expandLabel = expanded ? 'Show less' : `Show ${more} more`
     // The time goes first when the header would not fit on one line.
-    const actions = [signInLabel, canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
+    const actions = [signInLabel, vercelLabel, canRefresh ? (isRefreshing ? 'Refreshing…' : 'Refresh') : '', awaiting > 0 ? reviewLabel : '', canSweep ? '🧹' : '', more > 0 ? expandLabel : '', 'Hide']
     const headerLead = 2
     const headerNeeds = (withTime: boolean) =>
       headerLead + textWidth(title) + (withTime && updatedAt !== undefined ? 3 + textWidth(`updated ${clockTime(updatedAt)}`) : 0) +
@@ -1010,6 +1051,7 @@ export const register: Register = (on, options) => {
           )}
           <Box key="app-gap" width={APP_GAP} />
           <Button key="gcloud-login" label={signInLabel} plain dimColor onPress={() => void gcloudLogin($)} />
+          <Button key="vercel-login" label={vercelLabel} plain dimColor onPress={() => void vercelLogin($)} />
           <Box key="spacer" flexGrow={1} />
           {canRefresh && (
             <Button
