@@ -30,6 +30,9 @@ export type IssueStatus = {
 }
 
 // What the session's agent says it is doing, set through the set_status tool.
+// Whether each sign-in CLI has a working login; null until checked.
+export type SignedIn = { gcloud: boolean | null; vercel: boolean | null }
+
 export type StatusNote = {
   text: string
   setAt: number
@@ -101,6 +104,7 @@ declare module 'claude-code' {
       hidesAwaitingReview: boolean
       isSigningIn: boolean
       isSigningInVercel: boolean
+      signedIn: SignedIn
     }
   }
 }

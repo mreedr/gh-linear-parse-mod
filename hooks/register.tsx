@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { BoxProps, EngineInterface, Register } from 'claude-code'
 
-import type { StatusNote, BandColor, GroupingBase, IssueStatus, Item, PrGroup, PrStatus } from '../types'
+import type { StatusNote, BandColor, GroupingBase, IssueStatus, Item, PrGroup, PrStatus, SignedIn } from '../types'
 import { openLink } from './browser'
 import {
   PR_FIELDS,
@@ -62,6 +62,8 @@ const groupingBase = atom({ plugin: 'gh-linear-parse-mod', key: 'groupingBase' }
 const showsLanded = atom({ plugin: 'gh-linear-parse-mod', key: 'showsLanded' } as const, false)
 const isSigningIn = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningIn' } as const, false)
 const isSigningInVercel = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningInVercel' } as const, false)
+// null until the first check: 🔑 unknown, 🔓 signed in, 🔒 signed out
+const signedIn = atom({ plugin: 'gh-linear-parse-mod', key: 'signedIn' } as const, { gcloud: null, vercel: null } as SignedIn)
 
 const SHOWN = 5
 const MAX_STORED = 40
@@ -78,6 +80,12 @@ const RECHECK_MS = 15_000
 // gcloud opens its sign-in page through Python's webbrowser, which takes BROWSER as a plain program path.
 const BRAVE = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
 const SIGN_IN_MS = 5 * 60_000
+const SIGN_IN_CHECK_MS = 5 * 60_000
+// The token goes to /dev/null so it never reaches the mod; only the exit code matters.
+const SIGN_IN_CHECKS: Record<keyof SignedIn, { argv: string[]; env?: Record<string, string> }> = {
+  gcloud: { argv: ['sh', '-c', 'gcloud auth print-access-token --quiet >/dev/null 2>&1'] },
+  vercel: { argv: ['npx', '-y', 'vercel', 'whoami'], env: { CI: '1' } },
+}
 // vercel login opens its device page through the `open` package, which ignores BROWSER: CI=1 keeps it
 // from opening anything, and the band opens the page it prints in Brave.
 const VERCEL_PAGE = /(https:\/\/vercel\.com\/oauth\/device\S*)\s/
@@ -413,6 +421,19 @@ function frame(style: BandColor | null): Partial<BoxProps> {
 // App buttons (gcloud, vercel) sit apart from the title, left of the band's own buttons.
 const APP_GAP = 1
 
+async function checkSignedIn($: $, cli: keyof SignedIn) {
+  const { argv, env } = SIGN_IN_CHECKS[cli]
+  const ran = await $.process.run(argv, { ...(env && { env }), timeoutMs: 30_000 }).catch(() => null)
+  if (ran) await update($, signedIn, s => ({ ...s, [cli]: ran.exitCode === 0 }))
+}
+
+const checkSignIns = ($: $) => Promise.all([checkSignedIn($, 'gcloud'), checkSignedIn($, 'vercel')])
+
+// /clear and /resume start the session again; one timer is enough.
+let isCheckingSignIns = false
+
+const lock = (s: boolean | null) => (s === null ? '🔑' : s ? '🔓' : '🔒')
+
 async function gcloudLogin($: $) {
   if (await read($, isSigningIn)) return
   await update($, isSigningIn, () => true)
@@ -422,6 +443,7 @@ async function gcloudLogin($: $) {
     $.ui.toast(ran?.exitCode === 0 ? 'gcloud: signed in' : `gcloud sign-in failed${reason ? `: ${reason.slice(0, 120)}` : ''}`)
   } finally {
     await update($, isSigningIn, () => false)
+    await checkSignedIn($, 'gcloud')
   }
 }
 
@@ -457,6 +479,7 @@ async function vercelLogin($: $) {
   } finally {
     giveUp.cancel()
     await update($, isSigningInVercel, () => false)
+    await checkSignedIn($, 'vercel')
   }
 }
 
@@ -488,6 +511,11 @@ export const register: Register = (on, options) => {
     await update($, refreshing, () => 0)
     await update($, isSigningIn, () => false)
     await update($, isSigningInVercel, () => false)
+    void checkSignIns($)
+    if (!isCheckingSignIns) {
+      isCheckingSignIns = true
+      $.clock.every(SIGN_IN_CHECK_MS, () => void checkSignIns($))
+    }
     await restore($).catch(() => undefined)
     backfillSoon($)
     await fetchMissingCounts($)
@@ -842,8 +870,9 @@ export const register: Register = (on, options) => {
     const issues = await read($, issueStatuses)
     const updatedAt = lastChecked(list.map(i => i.key), { ...known, ...issues })
     const isRefreshing = (await read($, refreshing)) > 0
-    const signInLabel = (await read($, isSigningIn)) ? '🔑 gcloud…' : '🔑 gcloud'
-    const vercelLabel = (await read($, isSigningInVercel)) ? '🔑 vercel…' : '🔑 vercel'
+    const auth = await read($, signedIn)
+    const signInLabel = (await read($, isSigningIn)) ? '🔑 gcloud…' : `${lock(auth.gcloud)} gcloud`
+    const vercelLabel = (await read($, isSigningInVercel)) ? '🔑 vercel…' : `${lock(auth.vercel)} vercel`
     const { github: ungrouped, linear } = bandGroups(visible)
     const landed = {
       items: landedItems,

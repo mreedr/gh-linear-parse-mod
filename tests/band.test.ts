@@ -163,7 +163,7 @@ test('a session start reads again the PRs checked before counts were fetched', a
   let withCounts = false
   const calls: string[] = []
   on('process.run', async (_$, e) => {
-    calls.push(e.argv[3]!)
+    if (e.argv[0] === 'gh') calls.push(e.argv[3]!)
     return ran(pr('OPEN', withCounts ? { additions: 5, deletions: 2 } : {}))
   })
   await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
@@ -510,7 +510,7 @@ test('a resumed session gets its links and dismissals back from the store', asyn
   on('session.id', async () => ({ value: 's1' }))
   const calls: string[] = []
   on('process.run', async (_$, e) => {
-    calls.push(e.argv[3]!)
+    if (e.argv[0] === 'gh') calls.push(e.argv[3]!)
     return ran(pr('OPEN'))
   })
   await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2'))
@@ -769,7 +769,9 @@ test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts th
   on('ui.toast', async (_$, e) => (toasts.push(e.text), { value: undefined }))
   let finish = (_code: number) => {}
   const logins: { argv: string[]; browser?: string; timeoutMs?: number }[] = []
+  let isSignedIn = false
   on('process.run', async (_$, e) => {
+    if (e.argv[0] === 'sh') return { value: { ...ran('').value, exitCode: isSignedIn ? 0 : 1 } }
     if (e.argv[0] !== 'gcloud') return ran(pr('OPEN'))
     logins.push({ argv: [...e.argv], browser: e.init?.env?.BROWSER, timeoutMs: e.init?.timeoutMs })
     const code = await new Promise<number>(resolve => (finish = resolve))
@@ -790,14 +792,18 @@ test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts th
     { argv: ['gcloud', 'auth', 'login'], browser: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser', timeoutMs: 300_000 },
   ])
 
+  isSignedIn = true
   finish(0)
   await clock.advance(1)
-  expect(await label()).toBe('🔑 gcloud')
+  // the sign-in is checked again once gcloud finishes
+  expect(await label()).toBe('🔓 gcloud')
   expect(toasts).toEqual(['gcloud: signed in'])
 
+  isSignedIn = false
   await ui.press({ key: 'gcloud-login' })
   finish(1)
   await clock.advance(1)
+  expect(await label()).toBe('🔒 gcloud')
   expect(toasts.at(-1)).toBe('gcloud sign-in failed: ERROR: (gcloud.auth.login) There was a problem.')
 })
 
@@ -806,8 +812,10 @@ test('🔑 vercel runs npx vercel login, opens its device page in Brave and toas
   const toasts: string[] = []
   on('ui.toast', async (_$, e) => (toasts.push(e.text), { value: undefined }))
   const opened: string[][] = []
+  let isSignedIn = false
   on('process.run', async (_$, e) => {
     if (e.argv[0] === 'open') return (opened.push([...e.argv]), ran(''))
+    if (e.argv[3] === 'whoami') return { value: { ...ran('').value, exitCode: isSignedIn ? 0 : 1 } }
     return ran(pr('OPEN'))
   })
   let finish = (_code: number) => {}
@@ -835,15 +843,18 @@ test('🔑 vercel runs npx vercel login, opens its device page in Brave and toas
   expect(logins).toEqual([{ argv: ['npx', '-y', 'vercel', 'login'], ci: '1' }])
   expect(opened).toEqual([['open', '-a', 'Brave Browser', 'https://vercel.com/oauth/device?user_code=ABCD-EFGH']])
 
+  isSignedIn = true
   finish(0)
   await clock.advance(1)
-  expect(await label()).toBe('🔑 vercel')
+  expect(await label()).toBe('🔓 vercel')
   expect(toasts).toEqual(['vercel: signed in'])
 
+  isSignedIn = false
   await ui.press({ key: 'vercel-login' })
   await clock.advance(1)
   finish(1)
   await clock.advance(1)
+  expect(await label()).toBe('🔒 vercel')
   expect(toasts.at(-1)).toBe('vercel sign-in failed: Error: The device code expired.')
 })
 
@@ -982,4 +993,39 @@ test('edit_groups changes the grouping in place, and pressing a step ticks it', 
   expect(await tool('edit_groups', { edits: [{ op: 'set', group: 2, done: true }, { op: 'delete', group: 9 }] })).toBe(
     'Groups now: round 1 (1 PR), step "deploy", step "apply the migration" (done), round 2 (2 PRs). Edit 2: no group 9 (groups run from 0 to 3).',
   )
+})
+
+test('the sign-in buttons show 🔓 or 🔒 from a check at session start and every 5 minutes', async ($, on) => {
+  const clock = world(on)
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', async (_$, e) => ({ value: { command: e.name } }))
+  on('tool.register', async (_$, e) => ({ value: { tool: e.name } }))
+  const signedIn = { gcloud: true, vercel: false }
+  const checks: string[][] = []
+  on('process.run', async (_$, e) => {
+    const cli = e.argv[0] === 'sh' ? 'gcloud' : e.argv[3] === 'whoami' ? 'vercel' : undefined
+    if (!cli) return ran(pr('OPEN'))
+    checks.push([...e.argv])
+    return { value: { ...ran('').value, exitCode: signedIn[cli] ? 0 : 1 } }
+  })
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1'))
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const labels = async () => [(await ui.find({ key: 'gcloud-login' }))?.text, (await ui.find({ key: 'vercel-login' }))?.text]
+
+  // not checked yet
+  expect(await labels()).toEqual(['🔑 gcloud', '🔑 vercel'])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(1)
+  expect(await labels()).toEqual(['🔓 gcloud', '🔒 vercel'])
+  // the gcloud token goes to /dev/null, so the mod only sees the exit code
+  expect(checks).toEqual([
+    ['sh', '-c', 'gcloud auth print-access-token --quiet >/dev/null 2>&1'],
+    ['npx', '-y', 'vercel', 'whoami'],
+  ])
+
+  signedIn.gcloud = false
+  signedIn.vercel = true
+  await clock.advance(5 * 60_000)
+  expect(await labels()).toEqual(['🔒 gcloud', '🔓 vercel'])
 })
