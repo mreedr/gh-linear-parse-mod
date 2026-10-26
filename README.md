@@ -67,9 +67,9 @@ If the named browser fails to open, the link opens in the default browser with a
 | `/gh-linear-parse-mod color <color> [fill]` | Border (or fill) color for this session: a name, hex or theme key; the default is a gray border, `color` alone goes back to it, `color none` removes it |
 | `/gh-linear-parse-mod <color> [fill]` | Same as `color <color> [fill]`, for a color name, hex or theme key; any other unknown option shows the list of options and leaves the band alone |
 
-In the band, `x` dismisses a link for the session, 👀 (next to Refresh, shown while there are some) hides the PRs waiting on a review and shows them again (it reads `👀 N` while N are hidden), 🔑 gcloud runs `gcloud auth login` with its sign-in page opened in Brave (it reads `🔑 signing in…` until gcloud finishes, then a toast says how it went), 🧹 (shown while there are some) dismisses every merged or closed PR, and `Show N more` / `Show less` expands the list.
+In the band, `x` dismisses a link for the session, 👀 (next to Refresh, shown while there are some) hides the PRs waiting on a review and shows them again (it reads `👀 N` while N are hidden), 🔑 gcloud runs `gcloud auth login` with its sign-in page opened in Brave (it reads `🔑 gcloud…` until gcloud finishes, then a toast says how it went), 🧹 (shown while there are some) dismisses every merged or closed PR, and `Show N more` / `Show less` expands the list.
 App buttons such as 🔑 gcloud and 🔑 vercel sit just after the updated time, and the band's own buttons (Refresh through Hide) sit on the right.
-🔑 vercel runs `npx vercel login` and opens its device sign-in page in Brave (it reads `🔑 signing in…` until the CLI finishes, then a toast says how it went).
+🔑 vercel runs `npx vercel login` and opens its device sign-in page in Brave (it reads `🔑 vercel…` until the CLI finishes, then a toast says how it went).
 
 ## PR status
 

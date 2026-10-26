@@ -842,8 +842,8 @@ export const register: Register = (on, options) => {
     const issues = await read($, issueStatuses)
     const updatedAt = lastChecked(list.map(i => i.key), { ...known, ...issues })
     const isRefreshing = (await read($, refreshing)) > 0
-    const signInLabel = (await read($, isSigningIn)) ? '🔑 signing in…' : '🔑 gcloud'
-    const vercelLabel = (await read($, isSigningInVercel)) ? '🔑 signing in…' : '🔑 vercel'
+    const signInLabel = (await read($, isSigningIn)) ? '🔑 gcloud…' : '🔑 gcloud'
+    const vercelLabel = (await read($, isSigningInVercel)) ? '🔑 vercel…' : '🔑 vercel'
     const { github: ungrouped, linear } = bandGroups(visible)
     const landed = {
       items: landedItems,

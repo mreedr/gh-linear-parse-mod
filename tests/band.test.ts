@@ -783,7 +783,7 @@ test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts th
 
   expect(await label()).toBe('🔑 gcloud')
   await ui.press({ key: 'gcloud-login' })
-  expect(await label()).toBe('🔑 signing in…')
+  expect(await label()).toBe('🔑 gcloud…')
   // a second press while gcloud waits does not start another sign-in
   await ui.press({ key: 'gcloud-login' })
   expect(logins).toEqual([
@@ -828,7 +828,7 @@ test('🔑 vercel runs npx vercel login, opens its device page in Brave and toas
   expect(await label()).toBe('🔑 vercel')
   await ui.press({ key: 'vercel-login' })
   await clock.advance(1)
-  expect(await label()).toBe('🔑 signing in…')
+  expect(await label()).toBe('🔑 vercel…')
   // a second press while vercel waits does not start another sign-in
   await ui.press({ key: 'vercel-login' })
   // CI=1 keeps vercel from opening the default browser; the band opens the whole page in Brave once
