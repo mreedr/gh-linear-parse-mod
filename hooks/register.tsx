@@ -62,7 +62,7 @@ const groupingBase = atom({ plugin: 'gh-linear-parse-mod', key: 'groupingBase' }
 const showsLanded = atom({ plugin: 'gh-linear-parse-mod', key: 'showsLanded' } as const, false)
 const isSigningIn = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningIn' } as const, false)
 const isSigningInVercel = atom({ plugin: 'gh-linear-parse-mod', key: 'isSigningInVercel' } as const, false)
-// null until the first check: 🔑 unknown, 🔓 signed in, 🔒 signed out
+// null until the first check; 🔑 unless the check found it signed out (🔒)
 const signedIn = atom({ plugin: 'gh-linear-parse-mod', key: 'signedIn' } as const, { gcloud: null, vercel: null } as SignedIn)
 
 const SHOWN = 5
@@ -432,7 +432,7 @@ const checkSignIns = ($: $) => Promise.all([checkSignedIn($, 'gcloud'), checkSig
 // /clear and /resume start the session again; one timer is enough.
 let isCheckingSignIns = false
 
-const lock = (s: boolean | null) => (s === null ? '🔑' : s ? '🔓' : '🔒')
+const lock = (s: boolean | null) => (s === false ? '🔒' : '🔑')
 
 async function gcloudLogin($: $) {
   if (await read($, isSigningIn)) return

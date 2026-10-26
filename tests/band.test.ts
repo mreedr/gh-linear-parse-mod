@@ -796,7 +796,7 @@ test('🔑 gcloud runs gcloud auth login with Brave as its browser and toasts th
   finish(0)
   await clock.advance(1)
   // the sign-in is checked again once gcloud finishes
-  expect(await label()).toBe('🔓 gcloud')
+  expect(await label()).toBe('🔑 gcloud')
   expect(toasts).toEqual(['gcloud: signed in'])
 
   isSignedIn = false
@@ -846,7 +846,7 @@ test('🔑 vercel runs npx vercel login, opens its device page in Brave and toas
   isSignedIn = true
   finish(0)
   await clock.advance(1)
-  expect(await label()).toBe('🔓 vercel')
+  expect(await label()).toBe('🔑 vercel')
   expect(toasts).toEqual(['vercel: signed in'])
 
   isSignedIn = false
@@ -995,7 +995,7 @@ test('edit_groups changes the grouping in place, and pressing a step ticks it', 
   )
 })
 
-test('the sign-in buttons show 🔓 or 🔒 from a check at session start and every 5 minutes', async ($, on) => {
+test('the sign-in buttons show 🔑 or 🔒 from a check at session start and every 5 minutes', async ($, on) => {
   const clock = world(on)
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('command.register', async (_$, e) => ({ value: { command: e.name } }))
@@ -1017,7 +1017,7 @@ test('the sign-in buttons show 🔓 or 🔒 from a check at session start and ev
   expect(await labels()).toEqual(['🔑 gcloud', '🔑 vercel'])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(1)
-  expect(await labels()).toEqual(['🔓 gcloud', '🔒 vercel'])
+  expect(await labels()).toEqual(['🔑 gcloud', '🔒 vercel'])
   // the gcloud token goes to /dev/null, so the mod only sees the exit code
   expect(checks).toEqual([
     ['sh', '-c', 'gcloud auth print-access-token --quiet >/dev/null 2>&1'],
@@ -1027,5 +1027,5 @@ test('the sign-in buttons show 🔓 or 🔒 from a check at session start and ev
   signedIn.gcloud = false
   signedIn.vercel = true
   await clock.advance(5 * 60_000)
-  expect(await labels()).toEqual(['🔒 gcloud', '🔓 vercel'])
+  expect(await labels()).toEqual(['🔒 gcloud', '🔑 vercel'])
 })
