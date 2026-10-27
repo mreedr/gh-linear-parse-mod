@@ -394,7 +394,16 @@ test('a /clear keeps the band for the next task, saved under the new session id'
   on('store.set', async (_$, e) => (store.set(e.key, e.value), { value: undefined }))
   on('store.delete', async (_$, e) => (store.delete(e.key), { value: undefined }))
   on('store.keys', async () => ({ value: [...store.keys()] }))
-  on('session.end', async (_$, e) => ({ sessionId: e.sessionId }))
+  // Claude Code wipes a mod's state on /clear: values read as unset until written again
+  let isWiped = false
+  const rewritten = new Set<string>()
+  on('session.end', async (_$, e) => ((isWiped = e.reason === 'clear'), { sessionId: e.sessionId }))
+  on('state.set', async (_$, e, next) => (isWiped && rewritten.add(e.key), next(e)))
+  on('state.get', async (_$, e, next) => {
+    const r = await next(e)
+    const isUnset = isWiped && e.plugin === 'gh-linear-parse-mod' && !rewritten.has(e.key) && 'value' in r && r.value
+    return isUnset ? { value: { value: undefined, version: r.value.version } } : r
+  })
   let id = 's1'
   on('session.id', async () => ({ value: id }))
   on('process.run', async () => ran(pr('OPEN')))

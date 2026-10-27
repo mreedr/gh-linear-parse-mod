@@ -179,6 +179,64 @@ async function restore($: $) {
   refreshSoon($, list.map(i => i.key).filter(isChecked))
 }
 
+// Claude Code wipes a mod's $.state on /clear, so the band's values ride across in
+// module memory and are written back once the wipe is done.
+type Carried = {
+  items: Item[]
+  isHidden: boolean
+  dismissed: string[]
+  bandColor: BandColor | null
+  hasBackfilled: boolean
+  isExpanded: boolean
+  prStatuses: Record<string, PrStatus>
+  isWatching: boolean
+  issueStatuses: Record<string, IssueStatus>
+  hidesAwaitingReview: boolean
+  prGroups: PrGroup[] | null
+  groupingBase: GroupingBase | null
+  showsLanded: boolean
+  signedIn: SignedIn
+}
+
+async function carry($: $): Promise<Carried> {
+  return {
+    items: await read($, items),
+    isHidden: await read($, isHidden),
+    dismissed: await read($, dismissed),
+    bandColor: await read($, bandColor),
+    hasBackfilled: await read($, hasBackfilled),
+    isExpanded: await read($, isExpanded),
+    prStatuses: await read($, prStatuses),
+    isWatching: await read($, isWatching),
+    issueStatuses: await read($, issueStatuses),
+    hidesAwaitingReview: await read($, hidesAwaitingReview),
+    prGroups: await read($, prGroups),
+    groupingBase: await read($, groupingBase),
+    showsLanded: await read($, showsLanded),
+    signedIn: await read($, signedIn),
+  }
+}
+
+async function putBack($: $, c: Carried) {
+  await update($, items, () => c.items)
+  await update($, isHidden, () => c.isHidden)
+  await update($, dismissed, () => c.dismissed)
+  await update($, bandColor, () => c.bandColor)
+  await update($, hasBackfilled, () => c.hasBackfilled)
+  await update($, isExpanded, () => c.isExpanded)
+  await update($, prStatuses, () => c.prStatuses)
+  await update($, isWatching, () => c.isWatching)
+  await update($, issueStatuses, () => c.issueStatuses)
+  await update($, hidesAwaitingReview, () => c.hidesAwaitingReview)
+  await update($, prGroups, () => c.prGroups)
+  await update($, groupingBase, () => c.groupingBase)
+  await update($, showsLanded, () => c.showsLanded)
+  await update($, signedIn, () => c.signedIn)
+}
+
+// The new session id arrives after the /clear, so the first prompt saves the band under it.
+let isUnsavedAfterClear = false
+
 const inflight = new Set<string>()
 let isPolling = false
 
@@ -605,13 +663,18 @@ export const register: Register = (on, options) => {
     return started
   })
 
-  // A /clear goes on under a new session id with no session.start: the band carries over
-  // so the new task can still reach its links, and only the old task's status goes.
+  // A /clear goes on under a new session id with no session.start and a wiped $.state: the
+  // band carries over so the new task can still reach its links; the old task's status goes.
   // A /resume swaps in another session, whose session.start restores its own band.
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
       await update($, agentStatus, () => null)
-      $.clock.after(1, () => void persist($))
+      const carried = await carry($)
+      $.clock.after(1, async () => {
+        await putBack($, carried)
+        await persist($)
+        isUnsavedAfterClear = true
+      })
     }
     if (e.reason === 'resume') {
       await update($, items, () => [])
@@ -819,6 +882,10 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    if (isUnsavedAfterClear) {
+      isUnsavedAfterClear = false
+      await persist($)
+    }
     refreshSoon($, await record($, e.text))
     backfillSoon($)
 
