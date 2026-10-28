@@ -105,12 +105,12 @@ test('a PR row shows its short title after the label, the labels padded to line 
   expect(json).toContain('"color":"#8b95b8"')
   expect(json).toContain('{"type":"Text","props":{"dimColor":true},"children":["  mr cart · create the checkout session"]}')
 
-  // In a narrow band the description is cut to fit: 50 columns less the border (4) and `x ` (2).
+  // In a narrow band the description is cut to fit: 54 columns less the border (4), `x ` (2) and the copy button (4).
   const narrow = await $.ui.mount({
     plugin: 'gh-linear-parse-mod',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { ...(PROPS as object), bodyColumns: 50 } as never,
+    props: { ...(PROPS as object), bodyColumns: 54 } as never,
   })
   const cut = (await rows(narrow)).map(b => b.text)
   expect(cut).toEqual(['🟢    🦯 store | #802  mr cart · create the…', '🟢    🦯 ui    | #3    oc remove legacyFlag'])
@@ -150,7 +150,7 @@ test('a PR row shows its lines added and deleted, then its short title, both lin
     plugin: 'gh-linear-parse-mod',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 52 } as never,
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 56 } as never,
   })
   expect((await rows(narrow))[0]?.text).toBe('🟢    🦯 store | #802  mr +1204 -88  cart · o…')
 })
@@ -672,7 +672,7 @@ test('group_prs lays out the GitHub section; group asks Claude and group clear d
   const lines = async () =>
     (await (await mount()).findAll({ type: 'Box' }))
       .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
-      .map(b => b.text.replace(/^x/, '').trim())
+      .map(b => b.text.replace(/^x/, '').replace(/📋$/, '').trim())
 
   expect(await command('group by merge order')).toBe('Asked Claude to group the PRs in the band.')
   await clock.advance(10)
@@ -874,7 +874,7 @@ test('the header puts app buttons after the title, apart from the band buttons o
   await clock.advance(10)
   const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
 
-  const header = (await ui.findAll({ type: 'Button' })).filter(b => !b.key?.startsWith('open:') && !b.key?.startsWith('dismiss:'))
+  const header = (await ui.findAll({ type: 'Button' })).filter(b => !/^(open|dismiss|copy):/.test(b.key ?? ''))
   expect(header.map(b => b.text)).toEqual(['🔑 gcloud', '🔑 vercel', 'Refresh', '🧹', 'Hide'])
   // the title and time, then the app buttons, then the band's own buttons pushed right
   const drawn = (await ui.drawn()) as unknown as { children: { children: { props?: { key?: string } }[] }[] }
@@ -892,7 +892,7 @@ test('with groups up, landed PRs leave their groups for a folded landed row and 
   const lines = async () =>
     (await (await mount()).findAll({ type: 'Box' }))
       .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
-      .map(b => b.text.replace(/^x/, '').trim())
+      .map(b => b.text.replace(/^x/, '').replace(/📋$/, '').trim())
   const refresh = async () => {
     await (await mount()).press({ key: 'refresh' })
     await clock.advance(10)
@@ -963,7 +963,7 @@ test('edit_groups changes the grouping in place, and pressing a step ticks it', 
   const lines = async () =>
     (await ui.findAll({ type: 'Box' }))
       .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
-      .map(b => b.text.replace(/^x/, '').trim())
+      .map(b => b.text.replace(/^x/, '').replace(/📋$/, '').trim())
 
   await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2'))
   await clock.advance(10)
@@ -1037,4 +1037,36 @@ test('the sign-in buttons show 🔑 or 🔒 from a check at session start and ev
   signedIn.vercel = true
   await clock.advance(5 * 60_000)
   expect(await labels()).toEqual(['🔒 gcloud', '🔑 vercel'])
+})
+
+test('📋 at the end of a link row copies its URL; rows without a link have none', async ($, on) => {
+  const clock = world(on)
+  on('process.run', async () => ran(pr('OPEN')))
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => (toasts.push(e.text), { value: undefined }))
+  const copies: { text: string; surface?: string }[] = []
+  let isCopied = true
+  on('ui.copy', async (_$, e) => {
+    copies.push({ text: e.text, surface: e.surface })
+    return { value: isCopied ? { isCopied: true as const } : { isCopied: false as const, reason: 'no-clipboard' as const } }
+  })
+  await $.prompt.submit(submit('https://github.com/a/b/pull/1 and https://linear.app/acme/issue/ENG-1/x'))
+  await clock.advance(10)
+  await $.tool.call({ tool: 'mcp__gh-linear-parse-mod__group_prs', groups: [{ label: 'round 1', prs: ['a/b#1'] }, { step: 'deploy' }] } as never)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+
+  const copyKeys = (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('copy:'))
+  expect(copyKeys).toEqual(['copy:github:a/b#1', 'copy:linear:acme/issue/eng-1'])
+
+  await ui.press({ key: 'copy:github:a/b#1' })
+  await ui.press({ key: 'copy:linear:acme/issue/eng-1' })
+  expect(copies).toEqual([
+    { text: 'https://github.com/a/b/pull/1', surface: 'terminal' },
+    { text: 'https://linear.app/acme/issue/ENG-1/x', surface: 'terminal' },
+  ])
+  expect(toasts).toEqual(['Copied https://github.com/a/b/pull/1', 'Copied https://linear.app/acme/issue/ENG-1/x'])
+
+  isCopied = false
+  await ui.press({ key: 'copy:github:a/b#1' })
+  expect(toasts.at(-1)).toBe('Could not copy the link')
 })

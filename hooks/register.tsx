@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { BoxProps, EngineInterface, Register } from 'claude-code'
+import type { BoxProps, EngineInterface, Register, UiPressArgument } from 'claude-code'
 
 import type { StatusNote, BandColor, GroupingBase, IssueStatus, Item, PrGroup, PrStatus, SignedIn } from '../types'
 import { openLink } from './browser'
@@ -407,6 +407,11 @@ async function dismiss($: $, key: string) {
   await persist($)
   await update($, prStatuses, ({ [key]: _, ...rest }) => rest)
   await update($, issueStatuses, ({ [key]: _, ...rest }) => rest)
+}
+
+async function copyLink($: $, url: string, press: UiPressArgument) {
+  const copied = await $.ui.copy({ text: url, surface: press.surface }).catch(() => null)
+  $.ui.toast(copied?.isCopied ? `Copied ${url}` : 'Could not copy the link')
 }
 
 const isFinished = (s: PrStatus | undefined) => s?.state === 'merged' || s?.state === 'closed'
@@ -977,6 +982,12 @@ export const register: Register = (on, options) => {
     // Cells a row's Button has: the band less its frame and the `x `.
     const columns = Number.isFinite(e.props.bodyColumns) ? e.props.bodyColumns : Infinity
     const room = columns - frameColumns(style) - 2
+    // A link row also ends in its copy button: the spacer's gap, the button's and its two cells.
+    const linkRoom = room - 4
+    const copyButton = (i: Item) => [
+      <Box key="spacer" flexGrow={1} />,
+      <Button key={`copy:${i.key}`} label="📋" plain dimColor onPress={press => void copyLink($, i.url, press)} />,
+    ]
 
     // The whole row past its `x` is one Button; the description is cut to fit, since a
     // Button's children wrap rather than truncate.
@@ -986,8 +997,8 @@ export const register: Register = (on, options) => {
       const glyph = cell(issueGlyph(s))
       const slots = hasIssueSlot ? `${glyph} ` : ''
       const lead = textWidth(slots)
-      const label = fitText(s?.name ? labelText(i).padEnd(issueWidth) : labelText(i), room - lead)
-      const status = s?.name ? fitText(s.name, room - lead - textWidth(label) - 2) : ''
+      const label = fitText(s?.name ? labelText(i).padEnd(issueWidth) : labelText(i), linkRoom - lead)
+      const status = s?.name ? fitText(s.name, linkRoom - lead - textWidth(label) - 2) : ''
       return (
         <Box key={i.key} flexDirection="row" gap={1}>
           <Button key={`dismiss:${i.key}`} label="x" plain dimColor onPress={() => dismiss($, i.key)} />
@@ -998,6 +1009,7 @@ export const register: Register = (on, options) => {
             </Text>
             {status && <Text dimColor>{`  ${status}`}</Text>}
           </Button>
+          {copyButton(i)}
         </Box>
       )
     }
@@ -1011,10 +1023,10 @@ export const register: Register = (on, options) => {
       const diff = diffParts(s, addWidth)
       const slots = hasPr ? `${cell(g?.ci ?? '')} ${cell(g?.rv ?? '')} ` : ''
       const lead = hasPr ? textWidth(cell(g?.pr ?? '')) + 1 + textWidth(slots) : 0
-      const label = fitText(short || diff ? labelText(i).padEnd(prWidth) : labelText(i), room - lead)
+      const label = fitText(short || diff ? labelText(i).padEnd(prWidth) : labelText(i), linkRoom - lead)
       const by = s?.author ? `${authorInitials(s.author)} ` : ''
       const tag = short?.tag ? `${short.tag} · ` : ''
-      const descRoom = room - lead - textWidth(label) - 2
+      const descRoom = linkRoom - lead - textWidth(label) - 2
       // Counts are never cut: they show whole or not at all, and the title takes what is left.
       const counts = diff ? `${by}${diff.plus} ${diff.minus}` : ''
       const fitsDiff = diff !== undefined && textWidth(counts) <= descRoom
@@ -1049,6 +1061,7 @@ export const register: Register = (on, options) => {
             )}
             {fitsDiff && desc && <Text dimColor>{`${' '.repeat(gap)}${desc}`}</Text>}
           </Button>
+          {copyButton(i)}
         </Box>
       )
     }
