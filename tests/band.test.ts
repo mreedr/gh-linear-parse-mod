@@ -672,7 +672,7 @@ test('group_prs lays out the GitHub section; group asks Claude and group clear d
   const lines = async () =>
     (await (await mount()).findAll({ type: 'Box' }))
       .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
-      .map(b => b.text.replace(/^x/, '').replace(/📋$/, '').trim())
+      .map(b => b.text.replace(/^x/, '').replace(/📄$/, '').trim())
 
   expect(await command('group by merge order')).toBe('Asked Claude to group the PRs in the band.')
   await clock.advance(10)
@@ -892,7 +892,7 @@ test('with groups up, landed PRs leave their groups for a folded landed row and 
   const lines = async () =>
     (await (await mount()).findAll({ type: 'Box' }))
       .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
-      .map(b => b.text.replace(/^x/, '').replace(/📋$/, '').trim())
+      .map(b => b.text.replace(/^x/, '').replace(/📄$/, '').trim())
   const refresh = async () => {
     await (await mount()).press({ key: 'refresh' })
     await clock.advance(10)
@@ -963,7 +963,7 @@ test('edit_groups changes the grouping in place, and pressing a step ticks it', 
   const lines = async () =>
     (await ui.findAll({ type: 'Box' }))
       .filter(b => b.key?.startsWith('group-') || b.key?.startsWith('github:'))
-      .map(b => b.text.replace(/^x/, '').replace(/📋$/, '').trim())
+      .map(b => b.text.replace(/^x/, '').replace(/📄$/, '').trim())
 
   await $.prompt.submit(submit('https://github.com/a/b/pull/1 https://github.com/a/b/pull/2'))
   await clock.advance(10)
@@ -1039,7 +1039,7 @@ test('the sign-in buttons show 🔑 or 🔒 from a check at session start and ev
   expect(await labels()).toEqual(['🔒 gcloud', '🔑 vercel'])
 })
 
-test('📋 at the end of a link row copies its URL; rows without a link have none', async ($, on) => {
+test('📄 at the end of a link row copies its URL; rows without a link have none', async ($, on) => {
   const clock = world(on)
   on('process.run', async () => ran(pr('OPEN')))
   const toasts: string[] = []

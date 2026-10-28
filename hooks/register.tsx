@@ -986,7 +986,7 @@ export const register: Register = (on, options) => {
     const linkRoom = room - 4
     const copyButton = (i: Item) => [
       <Box key="spacer" flexGrow={1} />,
-      <Button key={`copy:${i.key}`} label="📋" plain dimColor onPress={press => void copyLink($, i.url, press)} />,
+      <Button key={`copy:${i.key}`} label="📄" plain dimColor onPress={press => void copyLink($, i.url, press)} />,
     ]
 
     // The whole row past its `x` is one Button; the description is cut to fit, since a
