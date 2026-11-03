@@ -30,7 +30,7 @@ function linearLink(parts: string[]): Link | undefined {
 const ELLIPSIS = /…|%e2%80%a6/i
 
 export function parseLink(raw: string): Link | undefined {
-  // A link shortened for display ("…/onramp/i…") counts only when its PR number or issue ID survived the cut.
+  // A link shortened for display ("…/acme/i…") counts only when its PR number or issue ID survived the cut.
   const cut = raw.search(ELLIPSIS)
   const head = cut < 0 ? raw : raw.slice(0, cut).replace(/[^/]*$/, '')
   const m = head.replace(TRAILING, '').match(/^https?:\/\/(?:www\.)?(github\.com|linear\.app)\/([^?#]*)/i)
