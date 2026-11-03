@@ -27,12 +27,18 @@ function linearLink(parts: string[]): Link | undefined {
   return { key: url.toLowerCase(), url }
 }
 
+const ELLIPSIS = /…|%e2%80%a6/i
+
 export function parseLink(raw: string): Link | undefined {
-  const m = raw.replace(TRAILING, '').match(/^https?:\/\/(?:www\.)?(github\.com|linear\.app)\/([^?#]*)/i)
+  // A link shortened for display ("…/onramp/i…") counts only when its PR number or issue ID survived the cut.
+  const cut = raw.search(ELLIPSIS)
+  const head = cut < 0 ? raw : raw.slice(0, cut).replace(/[^/]*$/, '')
+  const m = head.replace(TRAILING, '').match(/^https?:\/\/(?:www\.)?(github\.com|linear\.app)\/([^?#]*)/i)
   if (!m) return undefined
   const parts = (m[2] ?? '').split('/').filter(Boolean)
+  const link = m[1]?.toLowerCase() === 'github.com' ? githubLink(parts) : linearLink(parts)
 
-  return m[1]?.toLowerCase() === 'github.com' ? githubLink(parts) : linearLink(parts)
+  return cut < 0 || link?.key.startsWith('github:') || link?.key.startsWith('linear:') ? link : undefined
 }
 
 // Only GitHub pull requests and Linear pages count. A PR link collapses to

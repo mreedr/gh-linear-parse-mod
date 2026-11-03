@@ -90,6 +90,15 @@ describe('extractLinks', () => {
   test('strips trailing punctuation', () => {
     expect(extractLinks('Done: https://github.com/a/b/pull/3.')[0]?.url).toBe('https://github.com/a/b/pull/3')
   })
+  test('a link shortened with … counts only when its PR number or issue ID is whole', () => {
+    const urls = (text: string) => extractLinks(text).map(l => l.url)
+    expect(urls('https://linear.app/acme/i… https://linear.app/acme/i%E2%80%A6 https://linear.app/acme/project/big-launch-ab…')).toEqual([])
+    expect(urls('https://github.com/a/b/pull/12… https://github.com/a/b/pu…')).toEqual([])
+    expect(urls('https://linear.app/acme/issue/ENG-1/fix-the-lo… https://github.com/a/b/pull/3/fi%E2%80%A6')).toEqual([
+      'https://linear.app/acme/issue/ENG-1',
+      'https://github.com/a/b/pull/3',
+    ])
+  })
 })
 
 test('mergeLinks puts new links first, moves repeats up, and caps', () => {
