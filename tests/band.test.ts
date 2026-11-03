@@ -1070,3 +1070,40 @@ test('📄 at the end of a link row copies its URL; rows without a link have non
   await ui.press({ key: 'copy:github:a/b#1' })
   expect(toasts.at(-1)).toBe('Could not copy the link')
 })
+
+test('✍️ on a Linear ticket row hands it to /subtask; other rows have none', async ($, on) => {
+  const clock = world(on)
+  on('process.run', async () => ran(pr('OPEN')))
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => (toasts.push(e.text), { value: undefined }))
+  const runs: { command: string; args: string }[] = []
+  let fails = false
+  on('command.run', { command: 'subtask' }, async (_$, e) => {
+    if (fails) throw new Error('no subtask')
+    runs.push({ command: e.command, args: e.args })
+    return { text: 'forked' }
+  })
+  await $.prompt.submit(
+    submit('https://github.com/a/b/pull/1, https://linear.app/acme/issue/ENG-1/x and https://linear.app/acme/project/roadmap-1/overview'),
+  )
+  await clock.advance(10)
+  const ui = await $.ui.mount({ plugin: 'gh-linear-parse-mod', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+
+  const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.key)
+  expect(buttons.filter(k => k?.startsWith('fix:'))).toEqual(['fix:linear:acme/issue/eng-1'])
+  // ✍️ sits just left of 📄
+  expect(buttons.indexOf('fix:linear:acme/issue/eng-1')).toBe(buttons.indexOf('copy:linear:acme/issue/eng-1') - 1)
+
+  await ui.press({ key: 'fix:linear:acme/issue/eng-1' })
+  expect(runs).toEqual([
+    {
+      command: 'subtask',
+      args: 'can you find the reason for this: https://linear.app/acme/issue/ENG-1/x\n\nif the fix is clear, do it and make a pr',
+    },
+  ])
+  expect(toasts).toEqual(['Subtask started for ENG-1'])
+
+  fails = true
+  await ui.press({ key: 'fix:linear:acme/issue/eng-1' })
+  expect(toasts.at(-1)).toBe('Could not start a subtask for ENG-1')
+})

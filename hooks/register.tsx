@@ -414,6 +414,14 @@ async function copyLink($: $, url: string, press: UiPressArgument) {
   $.ui.toast(copied?.isCopied ? `Copied ${url}` : 'Could not copy the link')
 }
 
+const fixPrompt = (url: string) => `can you find the reason for this: ${url}\n\nif the fix is clear, do it and make a pr`
+
+// Hands a Linear ticket to /subtask, as if typed.
+async function startFix($: $, key: string, url: string) {
+  const ran = await $.command.run({ command: 'subtask', args: fixPrompt(url) }).then(() => true, () => false)
+  $.ui.toast(ran ? `Subtask started for ${issueId(key)}` : `Could not start a subtask for ${issueId(key)}`)
+}
+
 const isFinished = (s: PrStatus | undefined) => s?.state === 'merged' || s?.state === 'closed'
 
 // Dismisses the merged and closed PRs, so a later mention does not bring them back.
@@ -986,6 +994,7 @@ export const register: Register = (on, options) => {
     const linkRoom = room - 4
     const copyButton = (i: Item) => [
       <Box key="spacer" flexGrow={1} />,
+      isIssueKey(i.key) && <Button key={`fix:${i.key}`} label="✍️" plain dimColor onPress={() => void startFix($, i.key, i.url)} />,
       <Button key={`copy:${i.key}`} label="📄" plain dimColor onPress={press => void copyLink($, i.url, press)} />,
     ]
 
@@ -996,7 +1005,8 @@ export const register: Register = (on, options) => {
       const isDone = isIssueDone(s)
       const glyph = cell(issueGlyph(s))
       const slots = hasIssueSlot ? `${glyph} ` : ''
-      const lead = textWidth(slots)
+      // A ticket's ✍️ takes its two cells and a gap.
+      const lead = textWidth(slots) + (isIssueKey(i.key) ? 3 : 0)
       const label = fitText(s?.name ? labelText(i).padEnd(issueWidth) : labelText(i), linkRoom - lead)
       const status = s?.name ? fitText(s.name, linkRoom - lead - textWidth(label) - 2) : ''
       return (
